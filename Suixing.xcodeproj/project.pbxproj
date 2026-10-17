@@ -1,0 +1,81 @@
+// !$*UTF8*$!
+{
+    archiveVersion = 1;
+    classes = {};
+    objectVersion = 56;
+    objects = {
+        D10000000000000000000001 = {isa = PBXBuildFile; fileRef = D20000000000000000000001; };
+        D20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInput.swift; sourceTree = "<group>"; };
+        C10000000000000000000001 = {isa = PBXBuildFile; fileRef = C20000000000000000000001; };
+        C10000000000000000000002 = {isa = PBXBuildFile; fileRef = C20000000000000000000002; };
+        C10000000000000000000003 = {isa = PBXBuildFile; fileRef = C20000000000000000000003; };
+        C20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkFixture.swift; sourceTree = "<group>"; };
+        C20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
+        C20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationUI.swift; sourceTree = "<group>"; };
+        B10000000000000000000001 = {isa = PBXBuildFile; fileRef = B20000000000000000000001; };
+        B20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuixingUITests.swift; sourceTree = "<group>"; };
+        B20000000000000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SuixingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        B30000000000000000000001 = {isa = PBXGroup; children = (B20000000000000000000001,); path = SuixingUITests; sourceTree = "<group>"; };
+        B40000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = B70000000000000000000001; buildPhases = (B50000000000000000000001,B50000000000000000000002,B50000000000000000000003,); buildRules = (); dependencies = (B90000000000000000000001,); name = SuixingUITests; productName = SuixingUITests; productReference = B20000000000000000000002; productType = "com.apple.product-type.bundle.ui-testing"; };
+        B50000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B10000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
+        B50000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B50000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B80000000000000000000001,B80000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        B80000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = local.suixing.pocket.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Suixing; }; name = Debug; };
+        B80000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = local.suixing.pocket.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Suixing; }; name = Release; };
+        B90000000000000000000001 = {isa = PBXTargetDependency; target = A40000000000000000000001; targetProxy = B90000000000000000000002; };
+        B90000000000000000000002 = {isa = PBXContainerItemProxy; containerPortal = A60000000000000000000001; proxyType = 1; remoteGlobalIDString = A40000000000000000000001; remoteInfo = Suixing; };
+        A10000000000000000000006 = {isa = PBXBuildFile; fileRef = A20000000000000000000008; };
+        A10000000000000000000007 = {isa = PBXBuildFile; fileRef = A20000000000000000000009; };
+        A10000000000000000000008 = {isa = PBXBuildFile; fileRef = A2000000000000000000000A; };
+        A10000000000000000000009 = {isa = PBXBuildFile; fileRef = A2000000000000000000000B; };
+        A10000000000000000000001 = {isa = PBXBuildFile; fileRef = A20000000000000000000001; };
+        A10000000000000000000002 = {isa = PBXBuildFile; fileRef = A20000000000000000000002; };
+        A10000000000000000000003 = {isa = PBXBuildFile; fileRef = A20000000000000000000003; };
+        A10000000000000000000004 = {isa = PBXBuildFile; fileRef = A20000000000000000000005; };
+        A10000000000000000000005 = {isa = PBXBuildFile; fileRef = A20000000000000000000007; };
+        A20000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentCore.swift; sourceTree = "<group>"; };
+        A20000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RichText.swift; sourceTree = "<group>"; };
+        A2000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditor.swift; sourceTree = "<group>"; };
+        A2000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenUI.swift; sourceTree = "<group>"; };
+        A20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuixingApp.swift; sourceTree = "<group>"; };
+        A20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PocketModel.swift; sourceTree = "<group>"; };
+        A20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+        A20000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+        A20000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+        A20000000000000000000006 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Suixing.app; sourceTree = BUILT_PRODUCTS_DIR; };
+        A20000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceUI.swift; sourceTree = "<group>"; };
+        A30000000000000000000001 = {isa = PBXGroup; children = (A30000000000000000000002, B30000000000000000000001, A30000000000000000000003,); sourceTree = "<group>"; };
+        A30000000000000000000002 = {isa = PBXGroup; children = (D20000000000000000000001, A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000007, A20000000000000000000008, A20000000000000000000009, A2000000000000000000000A, A2000000000000000000000B, C20000000000000000000001, C20000000000000000000002, C20000000000000000000003,); path = Suixing; sourceTree = "<group>"; };
+        A30000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000006,B20000000000000000000002,); name = Products; sourceTree = "<group>"; };
+        A40000000000000000000001 = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A70000000000000000000002;
+            buildPhases = (A50000000000000000000001, A50000000000000000000002, A50000000000000000000003,);
+            buildRules = (); dependencies = (); name = Suixing; productName = Suixing;
+            productReference = A20000000000000000000006;
+            productType = "com.apple.product-type.application";
+        };
+        A50000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000001, A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000005, A10000000000000000000006, A10000000000000000000007, A10000000000000000000008, A10000000000000000000009, C10000000000000000000001, C10000000000000000000002, C10000000000000000000003,); runOnlyForDeploymentPostprocessing = 0; };
+        A50000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A50000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000004,); runOnlyForDeploymentPostprocessing = 0; };
+        A60000000000000000000001 = {
+            isa = PBXProject;
+            attributes = {BuildIndependentTargetsInParallel = YES; LastSwiftUpdateCheck = 1600; LastUpgradeCheck = 1600; TargetAttributes = {A40000000000000000000001 = {CreatedOnToolsVersion = 16.0; }; }; };
+            buildConfigurationList = A70000000000000000000001;
+            compatibilityVersion = "Xcode 14.0"; developmentRegion = zh_CN;
+            hasScannedForEncodings = 0; knownRegions = (zh_CN, en, Base,);
+            mainGroup = A30000000000000000000001;
+            productRefGroup = A30000000000000000000003;
+            projectDirPath = ""; projectRoot = ""; targets = (A40000000000000000000001,B40000000000000000000001,);
+        };
+        A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001, A80000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003, A80000000000000000000004,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        A80000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = dwarf; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; }; name = Debug; };
+        A80000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; IPHONEOS_DEPLOYMENT_TARGET = 16.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; name = Release; };
+        A80000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 15; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Suixing/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",); MARKETING_VERSION = 1.5.0; PRODUCT_BUNDLE_IDENTIFIER = local.suixing.pocket.zhang; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; SUPPORTS_MACCATALYST = NO; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Debug; };
+        A80000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 15; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = Suixing/Info.plist; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks"); MARKETING_VERSION = 1.5.0; PRODUCT_BUNDLE_IDENTIFIER = local.suixing.pocket.zhang; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = 1; SUPPORTS_MACCATALYST = NO; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; }; name = Release; };
+    };
+    rootObject = A60000000000000000000001;
+}
+
