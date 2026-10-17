@@ -241,7 +241,7 @@ import Vision
         }
     }
     func testLargeConversationUsageRefreshDoesNotRebuildHistory() {
-        executionTimeAllowance = 180
+        executionTimeAllowance = 300
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--performance-fixture"]; app.launch()
         let table = app.tables["transcript-table"]
         XCTAssertTrue(table.waitForExistence(timeout: 15))

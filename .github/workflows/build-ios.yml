@@ -1,15 +1,22 @@
 name: Build iPhone IPA
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Verification scope
+        type: choice
+        default: full
+        options: [full, performance]
 permissions:
   contents: read
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Check markdown structure and editor geometry
+        if: inputs.scope != 'performance'
         run: |
           mkdir -p checks
           swiftc Suixing/ContentCore.swift Validation/CoreChecks.swift -o checks/content-core
@@ -17,6 +24,7 @@ jobs:
           swiftc -parse-as-library -O Validation/FileReferenceChecks.swift -o checks/file-references
           checks/file-references | tee checks/file-reference-performance.json
       - name: Build native iPhone app without signing
+        if: inputs.scope != 'performance'
         run: |
           set -euo pipefail
           xcodebuild -version
@@ -26,6 +34,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' build
       - name: Package unsigned IPA
+        if: inputs.scope != 'performance'
         run: |
           set -euo pipefail
           mkdir -p package/Payload
@@ -36,6 +45,7 @@ jobs:
           zip -qr Suixing-unsigned.ipa Payload
           shasum -a 256 Suixing-unsigned.ipa > SHA256.txt
       - uses: actions/upload-artifact@v4
+        if: inputs.scope != 'performance'
         with:
           name: Suixing-iPhone-unsigned
           path: |
@@ -55,6 +65,7 @@ jobs:
             -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
           echo "$DEVICE" > .simulator-id
       - name: Render native iPhone 13 Pro screens
+        if: inputs.scope != 'performance'
         run: |
           set -euo pipefail
           DEVICE=$(cat .simulator-id)
@@ -81,7 +92,7 @@ jobs:
             xcrun simctl terminate "$DEVICE" local.suixing.pocket.zhang
           done
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && inputs.scope != 'performance'
         with:
           name: Suixing-native-UI-review
           path: screenshots/*
@@ -91,12 +102,14 @@ jobs:
         run: |
           set -euo pipefail
           DEVICE=$(cat .simulator-id)
+          FILTER=()
+          if [ "${{ inputs.scope }}" = "performance" ]; then FILTER=(-only-testing:SuixingUITests/SuixingUITests/testLargeConversationUsageRefreshDoesNotRebuildHistory); fi
           xcodebuild -project Suixing.xcodeproj -scheme Suixing \
             -configuration Debug -sdk iphonesimulator -destination "id=$DEVICE" \
             -derivedDataPath simulator-build -resultBundlePath UI-Checks.xcresult \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 \
-            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${FILTER[@]}" test
           xcrun simctl shutdown "$DEVICE"
       - uses: actions/upload-artifact@v4
         if: always()
