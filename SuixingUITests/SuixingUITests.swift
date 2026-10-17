@@ -254,7 +254,12 @@ import Vision
         XCTAssertEqual(after["fileMatchPasses"] as? Int, before["fileMatchPasses"] as? Int, "Usage refresh must not rescan historical messages against files")
         XCTAssertLessThanOrEqual((after["configuredCells"] as? Int ?? 0) - (before["configuredCells"] as? Int ?? 0), 2, "Unchanged visible messages must not be reconfigured by token updates")
         for _ in 0..<4 {
-            table.swipeDown(velocity: .fast); assertVisibleMessage(table)
+            let dragStart = table.coordinate(withNormalizedOffset: CGVector(dx: 0.10, dy: 0.25))
+            let dragEnd = table.coordinate(withNormalizedOffset: CGVector(dx: 0.10, dy: 0.85))
+            print("SCROLL_BEFORE", viewport(table))
+            dragStart.press(forDuration: 0.05, thenDragTo: dragEnd)
+            print("SCROLL_AFTER", viewport(table))
+            assertVisibleMessage(table)
             let latest = app.buttons["回到最新回复"]; XCTAssertTrue(latest.waitForExistence(timeout: 4)); latest.tap(); assertVisibleMessage(table)
         }
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "Large-conversation-after-scroll"; attachment.lifetime = .keepAlways; add(attachment)
