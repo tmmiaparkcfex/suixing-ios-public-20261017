@@ -427,12 +427,65 @@ private struct ComposerTextInput: View {
     let edited: () -> Void
     let send: () -> Void
     var body: some View {
-        TextField("发消息，@ 引用文件", text: $draft.text, axis: .vertical)
-            .focused(focused).disabled(disabled).submitLabel(.send).onSubmit(send)
-            .font(.system(size: 15)).lineLimit(expanded ? 1...4 : 1...1)
+        NativeComposerInput(text: $draft.text, focused: focused, expanded: expanded, disabled: disabled, edited: edited, send: send)
             .frame(minHeight: expanded ? 42 : 22, alignment: .topLeading)
-            .accessibilityIdentifier("composer-text")
-            .onChange(of: draft.text) { _ in edited() }
+    }
+}
+
+private struct NativeComposerInput: UIViewRepresentable {
+    @Binding var text: String
+    var focused: FocusState<Bool>.Binding
+    let expanded: Bool, disabled: Bool
+    let edited: () -> Void
+    let send: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    func makeUIView(context: Context) -> UITextView {
+        let view = UITextView(); view.delegate = context.coordinator
+        view.font = .systemFont(ofSize: 15); view.textColor = .label; view.backgroundColor = .clear
+        view.textContainerInset = .zero; view.textContainer.lineFragmentPadding = 0
+        view.returnKeyType = .send; view.enablesReturnKeyAutomatically = false
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.accessibilityIdentifier = "composer-text"; view.accessibilityLabel = "发消息，@ 引用文件"
+        let hint = UILabel(); hint.tag = 741; hint.text = "发消息，@ 引用文件"; hint.font = .systemFont(ofSize: 15); hint.textColor = .placeholderText; hint.isUserInteractionEnabled = false; hint.isAccessibilityElement = false
+        hint.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(hint)
+        NSLayoutConstraint.activate([hint.leadingAnchor.constraint(equalTo: view.leadingAnchor), hint.topAnchor.constraint(equalTo: view.topAnchor), hint.widthAnchor.constraint(lessThanOrEqualTo: view.widthAnchor)])
+        return view
+    }
+    func updateUIView(_ view: UITextView, context: Context) {
+        context.coordinator.parent = self
+        if view.text != text && view.markedTextRange == nil {
+            let selection = view.selectedRange, wasAtEnd = view.selectedRange.location == (view.text as NSString).length
+            view.text = text
+            view.selectedRange = NSRange(location: wasAtEnd ? (text as NSString).length : min(selection.location, (text as NSString).length), length: 0)
+        }
+        view.isEditable = !disabled; view.viewWithTag(741)?.isHidden = !text.isEmpty
+        if focused.wrappedValue != view.isFirstResponder {
+            let shouldFocus = focused.wrappedValue && !disabled
+            DispatchQueue.main.async { [weak view] in
+                guard let view else { return }
+                if shouldFocus && !view.isFirstResponder { view.becomeFirstResponder() }
+                else if !shouldFocus && view.isFirstResponder { view.resignFirstResponder() }
+            }
+        }
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? 280
+        let natural = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        return CGSize(width: width, height: min(expanded ? 84 : 22, max(expanded ? 42 : 22, natural.height)))
+    }
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: NativeComposerInput
+        init(_ parent: NativeComposerInput) { self.parent = parent }
+        func textViewDidBeginEditing(_ textView: UITextView) { if !parent.focused.wrappedValue { parent.focused.wrappedValue = true } }
+        func textViewDidEndEditing(_ textView: UITextView) { if parent.focused.wrappedValue { parent.focused.wrappedValue = false } }
+        func textViewDidChange(_ textView: UITextView) { parent.text = textView.text; textView.viewWithTag(741)?.isHidden = !textView.text.isEmpty; parent.edited() }
+        func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
+            guard text == "\n" else { return true }
+            // Selecting a Chinese IME candidate is not a send gesture.
+            guard textView.markedTextRange == nil else { return true }
+            parent.text = textView.text; parent.send()
+            return false
+        }
     }
 }
 

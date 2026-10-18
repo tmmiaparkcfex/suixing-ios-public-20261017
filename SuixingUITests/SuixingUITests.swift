@@ -33,11 +33,19 @@ import Vision
     }
     func testLibraryPhotoBodyOpensZoomAndDirectEditor() {
         let app = launch(["--show-attachments", "--photo-library-fixture"])
-        let photo = app.buttons["放大预览相册照片"].firstMatch
-        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.tap()
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let permission = NSPredicate(format: "label CONTAINS[c] 'Full Access' OR label CONTAINS[c] 'All Photos' OR label CONTAINS '所有照片' OR label CONTAINS '完全访问'")
+        let allow = system.buttons.matching(permission).firstMatch
+        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        else if app.buttons.matching(permission).firstMatch.waitForExistence(timeout: 2) { app.buttons.matching(permission).firstMatch.tap() }
+        let tray = app.descendants(matching: .any)["attachment-tray"]
+        let photo = app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "放大预览相册照片")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 15), "Photo fixture state: \(tray.value ?? "missing")")
+        let before = XCTAttachment(screenshot: app.screenshot()); before.name = "RecentPhotoLibrary"; before.lifetime = .keepAlways; add(before)
+        photo.tap()
         XCTAssertTrue(app.buttons["关闭图片"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["编辑图片"].exists); app.buttons["编辑图片"].tap()
-        XCTAssertTrue(app.buttons["使用此图"].waitForExistence(timeout: 8)); app.buttons["使用此图"].tap()
+        XCTAssertTrue(app.navigationBars.buttons["使用此图"].waitForExistence(timeout: 8)); app.navigationBars.buttons["使用此图"].tap()
         XCTAssertTrue(app.buttons["取消选择这张照片"].firstMatch.waitForExistence(timeout: 8))
     }
     func testScrollCollapsesTrayAndPreservesDraftAndManualArrow() {
@@ -52,6 +60,14 @@ import Vision
         XCTAssertTrue(app.buttons["收起输入框和键盘"].exists)
     }
 
+    func testTechnicalNamesAreLabeledAndReadable() {
+        let app = launch(["--show-names"]), table = app.tables["transcript-table"]
+        XCTAssertTrue(table.waitForExistence(timeout: 8))
+        table.swipeDown(velocity: .fast); table.swipeDown(velocity: .slow)
+        let label = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "〔文件〕README.md")).firstMatch
+        XCTAssertTrue(label.waitForExistence(timeout: 8))
+        let proof = XCTAttachment(screenshot: app.screenshot()); proof.name = "TechnicalNamesAndHeadings"; proof.lifetime = .keepAlways; add(proof)
+    }
     func testMarkdownStructure() {
         let app = launch(["--show-formatting"])
         XCTAssertTrue(app.staticTexts["准备已就绪"].waitForExistence(timeout: 8))
@@ -130,7 +146,7 @@ import Vision
         app.buttons["应用裁剪"].tap()
         app.buttons["旋转"].tap()
         app.buttons["使用此图"].tap()
-        XCTAssertFalse(app.navigationBars["编辑图片"].exists)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["编辑图片"]); waitForExpectations(timeout: 8)
         XCTAssertTrue(app.buttons["裁剪、旋转或标注图片"].exists)
     }
     func testNotificationSetup() {
@@ -247,8 +263,12 @@ import Vision
         app.buttons["选择模型：模型 B"].tap()
         XCTAssertTrue(app.staticTexts["0.65×"].exists)
         XCTAssertTrue(app.staticTexts["✓ 电脑已确认"].waitForExistence(timeout: 8))
+        app.buttons["关闭模型选择"].tap()
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B")).firstMatch.exists)
-        app.buttons["选择推理等级：high"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
+        let high = app.buttons["选择推理等级：high"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: high); waitForExpectations(timeout: 8)
+        high.tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["选择模型：模型 B"]); waitForExpectations(timeout: 8)
         let selector = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B"))
         XCTAssertTrue(selector.firstMatch.exists)
@@ -346,11 +366,19 @@ import Vision
         return value
     }
     private func assertTranscriptPixels(_ app: XCUIApplication, latest: Bool = false, file: StaticString = #filePath, line: UInt = #line) {
-        guard let image = app.screenshot().image.cgImage else { XCTFail("Screenshot unavailable", file: file, line: line); return }
-        let request = VNRecognizeTextRequest(); request.recognitionLanguages = ["zh-Hans", "en-US"]; request.recognitionLevel = .accurate
-        do { try VNImageRequestHandler(cgImage: image).perform([request]) } catch { XCTFail(error.localizedDescription, file: file, line: line); return }
-        let words = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        XCTAssertTrue(words.contains("最新回复") || (!latest && (words.contains("任务记录") || words.contains("段落"))), "Actual screenshot must contain transcript text", file: file, line: line)
+        let deadline = Date().addingTimeInterval(6)
+        var recognized = ""
+        repeat {
+            if let image = app.screenshot().image.cgImage {
+                let request = VNRecognizeTextRequest(); request.recognitionLanguages = ["zh-Hans", "en-US"]; request.recognitionLevel = .accurate
+                do { try VNImageRequestHandler(cgImage: image).perform([request]); recognized = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ") }
+                catch { XCTFail(error.localizedDescription, file: file, line: line); return }
+                if recognized.contains("最新回复") || (!latest && (recognized.contains("任务记录") || recognized.contains("段落"))) { return }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        let evidence = XCTAttachment(screenshot: app.screenshot()); evidence.name = "MissingTranscriptPixels"; evidence.lifetime = .keepAlways; add(evidence)
+        XCTFail("Actual screenshot must contain transcript text. OCR: " + recognized, file: file, line: line)
     }
     func testLongHistoryScrollAndJumpNeverBlanks() {
         executionTimeAllowance = 240

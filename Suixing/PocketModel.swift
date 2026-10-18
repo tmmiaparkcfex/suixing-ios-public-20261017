@@ -289,7 +289,7 @@ private enum Vault {
         do {
             let result = try await read("api/controls", as: EngineControls.self)
             if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result; if result.confirmed == true { unconfirmedControls.remove(controlsKey); controlsStatus = "电脑设置已同步" } }
-        } catch { handle(error) }
+        } catch { if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls?.models = []; conversation.controls?.canChangeModel = false; conversation.controls?.canChangeReasoning = false; controlsStatus = "电脑模型列表未同步，请重试" }; handle(error) }
     }
     @discardableResult func updateControls(_ patch: [String: String], announce: Bool = true) async -> Bool {
         guard !working, !controlsLoading, !designPreview else { return false }

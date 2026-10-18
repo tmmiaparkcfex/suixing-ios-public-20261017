@@ -334,7 +334,7 @@ struct FullscreenPhotoView: View {
     private var atLimit: Bool { !selected && model.pendingImages.count + model.pendingDocuments.count >= 5 }
     var body: some View {
         ZStack(alignment: .bottom) {
-            ZoomablePhoto(url: photo.url, close: { dismiss() }).ignoresSafeArea()
+            ZoomablePhoto(url: photo.url, close: { dismiss() }).padding(.bottom, photo.assetIdentifier == nil ? 0 : 96).ignoresSafeArea()
             if let asset = photo.assetIdentifier, let data = photo.data {
                 HStack(spacing: 20) {
                     Button { editing = true } label: { Label("编辑图片", systemImage: "slider.horizontal.3").padding(.vertical, 12).frame(maxWidth: .infinity) }

@@ -16,6 +16,17 @@ import PhotosUI
         if authorization == .notDetermined { authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite) }
         guard authorization == .authorized || authorization == .limited else { return }
         if !observing { PHPhotoLibrary.shared().register(self); observing = true }
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--photo-library-fixture"), PHAsset.fetchAssets(with: .image, options: nil).count == 0 {
+            let picture = UIGraphicsImageRenderer(size: CGSize(width: 900, height: 1200)).image { context in
+                UIColor.systemBlue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 900, height: 1200))
+                ("相册操作验收图片" as NSString).draw(at: CGPoint(x: 70, y: 180), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 58), .foregroundColor: UIColor.white])
+            }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                PHPhotoLibrary.shared().performChanges({ PHAssetChangeRequest.creationRequestForAsset(from: picture) }) { _, _ in continuation.resume() }
+            }
+        }
+        #endif
         reload()
     }
     private func reload() {
@@ -89,7 +100,14 @@ struct AttachmentTray: View {
                 trayButton("文件", icon: "paperclip", action: files)
             }.padding(.horizontal, 14)
             if library.authorization == .limited { Button("管理允许访问的照片") { if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, let controller = scene.windows.first(where: \.isKeyWindow)?.rootViewController { PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: controller) } }.font(.system(size: 11)).foregroundStyle(.secondary) }
-        }.padding(.vertical, 14).background(Color(.secondarySystemBackground)).accessibilityIdentifier("attachment-tray").task { await library.open() }
+        }.padding(.vertical, 14).background(Color(.secondarySystemBackground)).accessibilityIdentifier("attachment-tray").accessibilityValue(photoAccessSummary).task { await library.open() }
+    }
+    private var photoAccessSummary: String {
+        #if DEBUG && targetEnvironment(simulator)
+        return "authorization=\(library.authorization.rawValue);photos=\(library.assets.count)"
+        #else
+        return "最近照片，共 \(library.assets.count) 张"
+        #endif
     }
     private func trayLabel(_ title: String, icon: String) -> some View {
         VStack(spacing: 9) { Image(systemName: icon).font(.system(size: 24)); Text(title).font(.system(size: 14, weight: .medium)) }.frame(maxWidth: .infinity).frame(height: 82).foregroundStyle(Color.primary).background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 16))

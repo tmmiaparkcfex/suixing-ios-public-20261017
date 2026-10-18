@@ -6,7 +6,7 @@ on:
         description: Verification scope
         type: choice
         default: full
-        options: [full, performance, reader, interactions]
+        options: [full, performance, reader, interactions, critical]
 permissions:
   contents: read
 jobs:
@@ -118,6 +118,12 @@ jobs:
               FILTER+=("-only-testing:SuixingUITests/SuixingUITests/$TEST")
             done
           fi
+          if [ "${{ inputs.scope }}" = "critical" ]; then
+            FILTER=()
+            for TEST in testKeyboardSendSubmitsWhileComputerWorks testRoundSendDoesNotStopTaskBeforeSending testLibraryPhotoBodyOpensZoomAndDirectEditor testLongHistoryScrollAndJumpNeverBlanks testPhotoEditorToolsAndSave testCompactModelAndReasoningConfirmOriginalState testModelRefusalDoesNotPretendChangeSucceeded testHoldVoiceReleaseDraftCanBeEditedBeforeManualSend testVoiceModeReturnsToDraftAndPreservesTypedText testHoldVoiceSlideUpCancelsWithoutSending testAttachmentTrayRaisesComposerAndVoiceKeyboardToggle testScrollCollapsesTrayAndPreservesDraftAndManualArrow testQuestionCanCollapseReopenAndSkip testTranscriptDesktopImageLoadsAndOpens testTypingDoesNotInvalidateLongTranscript testStreamingDoesNotMoveHistoryAnchor testNetworkEngineAndConversationSwitches testTechnicalNamesAreLabeledAndReadable; do
+              FILTER+=("-only-testing:SuixingUITests/SuixingUITests/$TEST")
+            done
+          fi
           xcodebuild -project Suixing.xcodeproj -scheme Suixing \
             -configuration Debug -sdk iphonesimulator -destination "id=$DEVICE" \
             -derivedDataPath simulator-build -resultBundlePath UI-Checks.xcresult \
@@ -125,6 +131,19 @@ jobs:
             -maximum-test-execution-time-allowance 300 \
             -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO "${FILTER[@]}" test
           xcrun simctl shutdown "$DEVICE"
+      - name: Export native test screenshots
+        if: always()
+        run: |
+          if [ -d UI-Checks.xcresult ]; then
+            xcrun xcresulttool export attachments --path UI-Checks.xcresult --output-path test-screens || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Suixing-test-screens
+          path: test-screens/**
+          if-no-files-found: ignore
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         if: always()
         with:
