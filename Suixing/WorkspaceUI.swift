@@ -156,7 +156,7 @@ struct ChatView: View {
     @State private var followingLatest = true
     @State private var jumpToken = 0
     @State private var composerExpanded = false
-    @FocusState private var inputFocused: Bool
+    @State private var inputFocused = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var cameraPresented = false
     @State private var imagePreview: PendingImage?
@@ -422,19 +422,19 @@ private struct ModelSelectionOverlay: View {
 
 private struct ComposerTextInput: View {
     @ObservedObject var draft: ComposerDraft
-    var focused: FocusState<Bool>.Binding
+    @Binding var focused: Bool
     let expanded: Bool, disabled: Bool
     let edited: () -> Void
     let send: () -> Void
     var body: some View {
-        NativeComposerInput(text: $draft.text, focused: focused, expanded: expanded, disabled: disabled, edited: edited, send: send)
+        NativeComposerInput(text: $draft.text, focused: $focused, expanded: expanded, disabled: disabled, edited: edited, send: send)
             .frame(minHeight: expanded ? 42 : 22, alignment: .topLeading)
     }
 }
 
 private struct NativeComposerInput: UIViewRepresentable {
     @Binding var text: String
-    var focused: FocusState<Bool>.Binding
+    @Binding var focused: Bool
     let expanded: Bool, disabled: Bool
     let edited: () -> Void
     let send: () -> Void
@@ -459,10 +459,11 @@ private struct NativeComposerInput: UIViewRepresentable {
             view.selectedRange = NSRange(location: wasAtEnd ? (text as NSString).length : min(selection.location, (text as NSString).length), length: 0)
         }
         view.isEditable = !disabled; view.viewWithTag(741)?.isHidden = !text.isEmpty
-        if focused.wrappedValue != view.isFirstResponder {
-            let shouldFocus = focused.wrappedValue && !disabled
-            DispatchQueue.main.async { [weak view] in
-                guard let view else { return }
+        if (focused && !disabled) != view.isFirstResponder {
+            let coordinator = context.coordinator
+            DispatchQueue.main.async { [weak view, weak coordinator] in
+                guard let view, let coordinator else { return }
+                let shouldFocus = coordinator.parent.focused && !coordinator.parent.disabled
                 if shouldFocus && !view.isFirstResponder { view.becomeFirstResponder() }
                 else if !shouldFocus && view.isFirstResponder { view.resignFirstResponder() }
             }
@@ -476,8 +477,8 @@ private struct NativeComposerInput: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NativeComposerInput
         init(_ parent: NativeComposerInput) { self.parent = parent }
-        func textViewDidBeginEditing(_ textView: UITextView) { if !parent.focused.wrappedValue { parent.focused.wrappedValue = true } }
-        func textViewDidEndEditing(_ textView: UITextView) { if parent.focused.wrappedValue { parent.focused.wrappedValue = false } }
+        func textViewDidBeginEditing(_ textView: UITextView) { if !parent.focused { parent.focused = true } }
+        func textViewDidEndEditing(_ textView: UITextView) { if parent.focused { parent.focused = false } }
         func textViewDidChange(_ textView: UITextView) { parent.text = textView.text; textView.viewWithTag(741)?.isHidden = !textView.text.isEmpty; parent.edited() }
         func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
             guard text == "\n" else { return true }

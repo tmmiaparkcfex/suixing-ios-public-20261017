@@ -264,14 +264,14 @@ import Vision
         XCTAssertTrue(app.staticTexts["0.65×"].exists)
         XCTAssertTrue(app.staticTexts["✓ 电脑已确认"].waitForExistence(timeout: 8))
         app.buttons["关闭模型选择"].tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B")).firstMatch.exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B")).firstMatch.waitForExistence(timeout: 8))
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
         let high = app.buttons["选择推理等级：high"]
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: high); waitForExpectations(timeout: 8)
         high.tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["选择模型：模型 B"]); waitForExpectations(timeout: 8)
         let selector = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B"))
-        XCTAssertTrue(selector.firstMatch.exists)
+        XCTAssertTrue(selector.firstMatch.waitForExistence(timeout: 8))
     }
     func testModelRefusalDoesNotPretendChangeSucceeded() {
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--controls-refusal-fixture"]; app.launch()
