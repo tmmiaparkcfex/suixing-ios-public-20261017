@@ -178,6 +178,7 @@ struct ConversationImageView: View {
             HStack { Image(systemName: "photo"); Text(image.name).lineLimit(1); Spacer(); if thumbnail != nil { Text("点开大图") } }.font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .task(id: key + ":" + String(retry)) {
+            thumbnail = nil; failure = nil
             let cacheKey = key as NSString
             if let cached = ConversationImageCache.images.object(forKey: cacheKey) { thumbnail = cached; return }
             do {

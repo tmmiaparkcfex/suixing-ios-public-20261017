@@ -707,18 +707,21 @@ private enum Vault {
         let limit = 20 * 1024 * 1024
         if let raw = image.remoteURL {
             guard let url = URL(string: raw), url.scheme == "https", url.user == nil, url.password == nil else { throw PocketError.message("图片地址无效。") }
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false; configuration.urlCredentialStorage = nil
-            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-            let remote = URLSession(configuration: configuration)
-            defer { remote.finishTasksAndInvalidate() }
-            var req = URLRequest(url: url); req.timeoutInterval = 25
-            let (stream, response) = try await remote.bytes(for: req)
-            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
-                  response.mimeType?.hasPrefix("image/") == true, response.expectedContentLength <= Int64(limit) else { throw PocketError.message("远程图片暂不可用。") }
-            var bytes = Data()
-            for try await byte in stream { if bytes.count >= limit { throw PocketError.message("图片超过20MB。") }; bytes.append(byte) }
-            return bytes
+            let download = Task.detached(priority: .utility) {
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false; configuration.urlCredentialStorage = nil
+                configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+                let remote = URLSession(configuration: configuration)
+                defer { remote.finishTasksAndInvalidate() }
+                var req = URLRequest(url: url); req.timeoutInterval = 25
+                let (stream, response) = try await remote.bytes(for: req)
+                guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+                      response.mimeType?.hasPrefix("image/") == true, response.expectedContentLength <= Int64(limit) else { throw PocketError.message("远程图片暂不可用。") }
+                var bytes = Data()
+                for try await byte in stream { if bytes.count >= limit { throw PocketError.message("图片超过20MB。") }; bytes.append(byte) }
+                return bytes
+            }
+            return try await withTaskCancellationHandler(operation: { try await download.value }, onCancel: { download.cancel() })
         }
         var req = try request("api/image", query: [URLQueryItem(name: "id", value: image.id)])
         var components = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!

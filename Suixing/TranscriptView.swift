@@ -125,7 +125,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
                 return url.scheme == "https" || url.scheme == "http" ? .systemAction : .discarded
             }
             cell.contentConfiguration = UIHostingConfiguration {
-                content.environmentObject(model).environment(\.openURL, openURL)
+                content.id(id).environmentObject(model).environment(\.openURL, openURL)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }.margins(.horizontal, 14).margins(.vertical, 9)
