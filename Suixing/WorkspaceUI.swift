@@ -399,7 +399,7 @@ private struct ModelSelectionOverlay: View {
         GeometryReader { geometry in
             if presented, let anchor {
                 let rect: CGRect = geometry[anchor]
-                let desired: CGFloat = max(165, CGFloat(model.conversation.controls?.models.count ?? 0) * 53 + 82)
+                let desired: CGFloat = max(165, CGFloat(model.conversation.controls?.models?.count ?? 0) * 53 + 82)
                 let height: CGFloat = min(330, min(desired, max(165, rect.minY - 16)))
                 let width: CGFloat = min(354, geometry.size.width - 24)
                 Color.black.opacity(0.04).contentShape(Rectangle()).onTapGesture { presented = false }
