@@ -227,7 +227,7 @@ struct ChatView: View {
     }
     private var messages: some View {
         NativeTranscriptView(model: model, conversationKey: model.engine + ":" + (model.conversation.threadId ?? ""), jumpToken: jumpToken,
-            initialFollowLatest: !(model.designPreview && ProcessInfo.processInfo.arguments.contains("--show-formatting")),
+            initialFollowLatest: !(model.designPreview && (ProcessInfo.processInfo.arguments.contains("--show-formatting") || ProcessInfo.processInfo.arguments.contains("--show-images"))),
             progress: !model.currentSteps.isEmpty || model.conversation.busy ? AnyView(inlineProgress.environmentObject(model)) : nil,
             progressRevision: "\(model.conversation.busy)-\(model.conversation.events.count)-\(model.conversation.events.last?.summary ?? "")",
             emptyState: AnyView(emptyState.environmentObject(model)), onFollowingLatest: { followingLatest = $0 })
@@ -394,6 +394,7 @@ struct MessageBubble: View {
     @State private var sharing = false
     @State private var showingUsage = false
     private var isUser: Bool { message.role == "user" }
+    private var isProgress: Bool { !isUser && message.phase == "commentary" }
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 11) {
             HStack(spacing: 6) {
@@ -407,7 +408,10 @@ struct MessageBubble: View {
             }.font(.system(size: 11))
             HStack(alignment: .top, spacing: 0) {
                 if isUser { Spacer(minLength: 40) }
-                RichMessageText(text: message.text).equatable().textSelection(.enabled)
+                VStack(alignment: .leading, spacing: 15) {
+                    if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { RichMessageText(text: message.text, images: message.images ?? [], engine: engine).equatable().textSelection(.enabled) }
+                    ForEach((message.images ?? []).filter { $0.inline != true }) { image in ConversationImageView(image: image, engine: engine) }
+                }
                     .padding(isUser ? 14 : 0)
                     .background(isUser ? Color(red: 0.935, green: 0.943, blue: 0.998) : .clear, in: RoundedRectangle(cornerRadius: 20))
                     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
@@ -427,8 +431,8 @@ struct MessageBubble: View {
                 if isUser { copyButton }
                 if !isUser { Spacer() }
             }.font(.system(size: 15)).foregroundStyle(softInk).padding(.horizontal, isUser ? 5 : 0)
-        }.padding(isUser ? 0 : 14).background(isUser ? .clear : Color(.systemBackground), in: RoundedRectangle(cornerRadius: 17))
-            .overlay { if !isUser { RoundedRectangle(cornerRadius: 17).stroke(inkBlue.opacity(0.12), lineWidth: 1) } }
+        }.padding(isUser ? 0 : 15).background(isUser ? .clear : isProgress ? Color(.secondarySystemBackground).opacity(0.55) : Color(.systemBackground), in: RoundedRectangle(cornerRadius: 17))
+            .overlay { if !isUser { RoundedRectangle(cornerRadius: 17).stroke(isProgress ? Color.primary.opacity(0.04) : inkBlue.opacity(0.18), lineWidth: 1) } }
             .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
             .sheet(isPresented: $sharing) { TextShareSheet(text: message.text) }
             .sheet(isPresented: $showingUsage) { NavigationStack { TokenDetailsView(usage: message.usage, scope: message.isTurnUsage ? "本轮回复合计" : "这条回复") }.presentationDetents([.medium, .large]) }

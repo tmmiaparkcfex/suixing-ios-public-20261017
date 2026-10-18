@@ -161,7 +161,17 @@ private enum Vault {
                 conversation.messages = [Message(role: "assistant", text: "## 准备已就绪\n\n**结论：现在可以开始操作。**\n\n| 功能 | 当前状态 |\n|---|---|\n| 图片 | 支持**裁剪、旋转和标注** |\n| 用量 | 点击底栏查看**实时曲线** |\n| 任务 | 手机退出后，电脑继续执行 |\n\n### 下一步\n\n1. 打开要继续的电脑会话。\n2. 发送截图，圈出需要修改的地方。\n\n> 注意：关机或休眠会中断任务。\n\n```text\n工作目录：D:\\codex\n```", time: now - 60000)]
                 conversation.busy = false; conversation.events = []
             }
+            if ProcessInfo.processInfo.arguments.contains("--show-images") {
+                let computer = MessageImage(id: "preview-desktop", name: "电脑回复中的示意图", width: 800, height: 500, inline: true)
+                let phone = MessageImage(id: "preview-phone", name: "手机发送的截图", width: 800, height: 500, inline: false)
+                conversation.messages = [
+                    Message(role: "assistant", text: "## 图片与文字一起显示\n\n这是电脑回复中的图片，点击可以查看大图。\n\n![示意图](suixing-image:preview-desktop)\n\n**重点：图片后面的说明属于同一条回复。**", time: now - 60000, itemId: "preview-picture-answer", phase: "final_answer", images: [computer]),
+                    Message(role: "user", text: "这是我从手机发来的截图。", time: now, itemId: "preview-picture-user", images: [phone])
+                ]
+                conversation.busy = false; conversation.events = []
+            }
             if ProcessInfo.processInfo.arguments.contains("--show-editor") {
+                // Photo editor previews are separate from transcript image previews.
                 let picture = UIGraphicsImageRenderer(size: CGSize(width: 900, height: 1200)).image { context in
                     UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 900, height: 1200))
                     UIColor.systemBlue.withAlphaComponent(0.09).setFill(); context.fill(CGRect(x: 50, y: 60, width: 800, height: 200))
@@ -680,6 +690,55 @@ private enum Vault {
             let filename = (name as NSString).lastPathComponent
             let url = folder.appendingPathComponent(filename.isEmpty ? "文件" : filename)
             try content.write(to: url, options: .atomic)
+            preview = PreviewFile(url: url)
+        } catch { handle(error) }
+    }
+    func imageData(_ image: MessageImage, engine requestedEngine: String) async throws -> Data {
+        #if DEBUG && targetEnvironment(simulator)
+        if designPreview {
+            return UIGraphicsImageRenderer(size: CGSize(width: 800, height: 500)).pngData { context in
+                UIColor(red: 0.92, green: 0.95, blue: 1, alpha: 1).setFill(); context.fill(CGRect(x: 0, y: 0, width: 800, height: 500))
+                (image.name as NSString).draw(at: CGPoint(x: 50, y: 80), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 42), .foregroundColor: UIColor.systemBlue])
+                for i in 0..<3 { UIColor.systemBlue.withAlphaComponent(CGFloat(i + 1) * 0.18).setFill(); context.fill(CGRect(x: CGFloat(50 + i * 235), y: 210, width: 200, height: 180)) }
+                ("合成验收图片 · 点开可放大" as NSString).draw(at: CGPoint(x: 50, y: 430), withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.secondaryLabel])
+            }
+        }
+        #endif
+        let limit = 20 * 1024 * 1024
+        if let raw = image.remoteURL {
+            guard let url = URL(string: raw), url.scheme == "https", url.user == nil, url.password == nil else { throw PocketError.message("图片地址无效。") }
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false; configuration.urlCredentialStorage = nil
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            let remote = URLSession(configuration: configuration)
+            defer { remote.finishTasksAndInvalidate() }
+            var req = URLRequest(url: url); req.timeoutInterval = 25
+            let (stream, response) = try await remote.bytes(for: req)
+            guard let response = response as? HTTPURLResponse, response.statusCode == 200,
+                  response.mimeType?.hasPrefix("image/") == true, response.expectedContentLength <= Int64(limit) else { throw PocketError.message("远程图片暂不可用。") }
+            var bytes = Data()
+            for try await byte in stream { if bytes.count >= limit { throw PocketError.message("图片超过20MB。") }; bytes.append(byte) }
+            return bytes
+        }
+        var req = try request("api/image", query: [URLQueryItem(name: "id", value: image.id)])
+        var components = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
+        components.queryItems = (components.queryItems ?? []).filter { $0.name != "engine" } + [URLQueryItem(name: "engine", value: requestedEngine)]
+        req.url = components.url; req.timeoutInterval = 25
+        let (bytes, response) = try await session.data(for: req)
+        try check(response, data: bytes)
+        guard bytes.count <= limit, response.mimeType?.hasPrefix("image/") == true else { throw PocketError.message("电脑返回的图片无效或过大。") }
+        return bytes
+    }
+    func previewImage(_ image: MessageImage, engine requestedEngine: String) async {
+        guard !fileLoading else { return }
+        fileLoading = true; defer { fileLoading = false }
+        do {
+            let bytes = try await imageData(image, engine: requestedEngine)
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("图片预览", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let ext = bytes.starts(with: [0x89, 0x50, 0x4e, 0x47]) ? ".png" : bytes.starts(with: [0xff, 0xd8]) ? ".jpg" : bytes.starts(with: [0x47, 0x49, 0x46]) ? ".gif" : ".webp"
+            let url = folder.appendingPathComponent(image.id + ext)
+            try bytes.write(to: url, options: .atomic)
             preview = PreviewFile(url: url)
         } catch { handle(error) }
     }

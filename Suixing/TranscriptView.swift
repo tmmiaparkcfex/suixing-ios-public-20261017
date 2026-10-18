@@ -206,6 +206,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
             revision.combine(message.text)
             revision.combine(message.time)
             revision.combine(message.phase)
+            if let images = message.images { for image in images { revision.combine(image.id); revision.combine(image.width); revision.combine(image.height); revision.combine(image.inline); revision.combine(image.remoteURL) } }
             if let usage = message.usage {
                 revision.combine(usage.totalTokens); revision.combine(usage.inputTokens)
                 revision.combine(usage.outputTokens); revision.combine(usage.cachedInputTokens)

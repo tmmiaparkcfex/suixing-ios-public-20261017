@@ -13,6 +13,22 @@ import Vision
         XCTAssertFalse(app.staticTexts["## 准备已就绪"].exists)
         XCTAssertFalse(app.staticTexts["|---|---|"].exists)
     }
+    func testTranscriptDesktopImageLoadsAndOpens() {
+        let app = launch(["--show-images"])
+        let image = app.buttons["conversation-image-preview-desktop"]
+        XCTAssertTrue(image.waitForExistence(timeout: 10))
+        let loaded = NSPredicate(format: "label BEGINSWITH %@", "查看图片：")
+        expectation(for: loaded, evaluatedWith: image)
+        waitForExpectations(timeout: 12)
+        XCTAssertTrue(app.staticTexts["图片与文字一起显示"].exists)
+        XCTAssertFalse(app.staticTexts["![示意图](suixing-image:preview-desktop)"].exists)
+        image.tap()
+        XCTAssertTrue(app.buttons["完成"].waitForExistence(timeout: 8))
+        app.buttons["完成"].tap()
+        let table = app.tables["transcript-table"]
+        table.swipeUp()
+        XCTAssertTrue(app.buttons["conversation-image-preview-phone"].waitForExistence(timeout: 8))
+    }
     func testFloatingPanelFollowsFinger() {
         let app = launch(), counter = app.staticTexts["token-total"]
         XCTAssertTrue(counter.waitForExistence(timeout: 8))

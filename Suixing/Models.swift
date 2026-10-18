@@ -104,7 +104,17 @@ struct Message: Decodable, Equatable {
     var usage: TokenUsage? = nil
     var itemId: String?
     var phase: String?
+    var images: [MessageImage]? = nil
     var isTurnUsage: Bool { usage?.source?.contains("turn") == true }
+}
+
+struct MessageImage: Decodable, Identifiable, Equatable {
+    let id: String
+    var name: String = "图片"
+    var width: Double?
+    var height: Double?
+    var inline: Bool?
+    var remoteURL: String?
 }
 
 struct TokenUsage: Decodable, Equatable {

@@ -23,11 +23,14 @@ enum ContentBlock: Equatable {
     case code(String, String)
     case table([[String]])
     case divider
+    case image(String, String)
+    case callout(String, String)
 }
 
 enum ContentParser {
     private static let heading = try! NSRegularExpression(pattern: "^(#{1,6})\\s+(.+?)(?:\\s+#+)?$")
-    private static let list = try! NSRegularExpression(pattern: "^(\\s*)([-+*]|[0-9]+[.)])\\s+(.+)$")
+    private static let list = try! NSRegularExpression(pattern: "^(\\s*)([-+*•](?=\\s)|[0-9]+\\.(?=\\s)|[0-9]+[、)）]|[一二三四五六七八九十]+[、)）])\\s*(.+)$")
+    private static let standaloneBold = try! NSRegularExpression(pattern: "^\\*\\*([^*\\n]{1,80})\\*\\*[:：]?$")
     private static func groups(_ expression: NSRegularExpression, _ line: String) -> [String]? {
         let ns = line as NSString
         guard let match = expression.firstMatch(in: line, range: NSRange(location: 0, length: ns.length)) else { return nil }
@@ -51,13 +54,21 @@ enum ContentParser {
         let columns = cells(line)
         return columns.count >= 2 && columns.allSatisfy { value in
             let stripped = value.replacingOccurrences(of: ":", with: "").trimmingCharacters(in: .whitespaces)
-            return stripped.count >= 3 && stripped.allSatisfy { $0 == "-" }
+            return stripped.count >= 2 && stripped.allSatisfy { $0 == "-" }
         }
     }
     static func parse(_ source: String) -> [ContentBlock] {
         let lines = source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
         var result: [ContentBlock] = [], paragraph: [String] = [], index = 0
-        func flush() { if !paragraph.isEmpty { result.append(.paragraph(paragraph.joined(separator: "\n"))); paragraph = [] } }
+        func flush() {
+            guard !paragraph.isEmpty else { return }
+            let text = paragraph.joined(separator: "\n")
+            let labels = ["注意：", "提醒：", "重要：", "结论：", "提示：", "警告："]
+            if let label = labels.first(where: { text.hasPrefix($0) }) {
+                result.append(.callout(String(label.dropLast()), String(text.dropFirst(label.count)).trimmingCharacters(in: .whitespacesAndNewlines)))
+            } else { result.append(.paragraph(text)) }
+            paragraph = []
+        }
         while index < lines.count {
             let raw = lines[index], line = raw.trimmingCharacters(in: .whitespaces)
             if line.isEmpty { flush(); index += 1; continue }
@@ -77,6 +88,8 @@ enum ContentParser {
                 result.append(.table(rows)); continue
             }
             if let values = groups(heading, line) { flush(); result.append(.heading(values[0].count, values[1])); index += 1; continue }
+            if let values = groups(standaloneBold, line) { flush(); result.append(.heading(3, values[0])); index += 1; continue }
+            if let image = imageLine(line) { flush(); result.append(.image(image.0, image.1)); index += 1; continue }
             if ["---", "***", "___"].contains(line.replacingOccurrences(of: " ", with: "")) { flush(); result.append(.divider); index += 1; continue }
             if line.hasPrefix(">") {
                 flush(); var quotes: [String] = []
@@ -86,9 +99,11 @@ enum ContentParser {
                 result.append(.quote(quotes.joined(separator: "\n"))); continue
             }
             if let values = groups(list, raw) {
-                flush(); let prefix = ["-", "*", "+"].contains(values[1]) ? "•" : values[1]
+                flush(); var prefix = ["-", "*", "+", "•"].contains(values[1]) ? "•" : values[1]
                 var text = values[2]; index += 1
-                while index < lines.count && lines[index].hasPrefix("  ") && groups(list, lines[index]) == nil && !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
+                if text.hasPrefix("[x] ") || text.hasPrefix("[X] ") { prefix = "✓"; text = String(text.dropFirst(4)) }
+                else if text.hasPrefix("[ ] ") { prefix = "○"; text = String(text.dropFirst(4)) }
+                while index < lines.count && lines[index].prefix(while: { $0 == " " }).count > values[0].count && groups(list, lines[index]) == nil && groups(heading, lines[index].trimmingCharacters(in: .whitespaces)) == nil && !lines[index].trimmingCharacters(in: .whitespaces).isEmpty && !lines[index].contains("```") && !lines[index].contains("~~~") && !(index + 1 < lines.count && isTableRule(lines[index+1])) {
                     text += "\n" + lines[index].trimmingCharacters(in: .whitespaces); index += 1
                 }
                 result.append(.listItem(prefix, text, min(4, values[0].count / 2))); continue
@@ -96,6 +111,14 @@ enum ContentParser {
             paragraph.append(raw); index += 1
         }
         flush(); return result
+    }
+    private static func imageLine(_ line: String) -> (String, String)? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"), let separator = line.range(of: "](") else { return nil }
+        let caption = String(line[line.index(line.startIndex, offsetBy: 2)..<separator.lowerBound])
+        var target = String(line[separator.upperBound..<line.index(before: line.endIndex)]).trimmingCharacters(in: .whitespaces)
+        if target.hasPrefix("<"), target.hasSuffix(">") { target = String(target.dropFirst().dropLast()) }
+        guard target.hasPrefix("suixing-image:") else { return nil }
+        return (caption, String(target.dropFirst("suixing-image:".count)))
     }
 }
 
