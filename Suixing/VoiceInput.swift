@@ -186,7 +186,7 @@ struct VoiceModeToggle: UIViewRepresentable {
             Task { await voice.start() }
         }
         view.moved = { voice.cancelArmed = $0 }
-        view.ended = { cancel in if cancel || !voice.recording { voice.cancel() } else { voice.finish(using: model) } }
+        view.ended = { cancel in if voice.recognizing { return }; if cancel || !voice.recording { voice.cancel() } else { voice.finish(using: model) } }
     }
 }
 

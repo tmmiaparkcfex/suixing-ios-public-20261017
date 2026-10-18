@@ -119,7 +119,7 @@ private enum Vault {
             designPreview = true; loggedIn = true; connected = true
             UserDefaults.standard.set(true, forKey: "pocket.tokenOverlay")
             if ProcessInfo.processInfo.arguments.contains("--reset-overlay-position") {
-                UserDefaults.standard.set(0.73, forKey: "pocket.tokenOverlayX"); UserDefaults.standard.set(0.12, forKey: "pocket.tokenOverlayY")
+                UserDefaults.standard.set(0.73, forKey: "pocket.tokenOverlayX"); UserDefaults.standard.set(0.025, forKey: "pocket.tokenOverlayY")
             }
             engine = ProcessInfo.processInfo.arguments.contains("workbuddy") ? "workbuddy" : ProcessInfo.processInfo.arguments.contains("dsh") ? "dsh" : "codex"
             let now = Date().timeIntervalSince1970 * 1000
@@ -542,7 +542,7 @@ private enum Vault {
                 pendingDocuments[index].uploadedId = result.id; ids.append(result.id)
             }
             _ = try await data("api/send", body: ["text": text, "attachments": ids])
-            draft = ""; pendingImages = []; pendingDocuments = []; await refresh()
+            voiceRecorder.cancel(); draft = ""; pendingImages = []; pendingDocuments = []; await refresh()
         }
         catch { handle(error) }
     }
@@ -811,7 +811,7 @@ private enum Vault {
             let bytes = try await imageData(image, engine: requestedEngine)
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("图片预览", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let ext = bytes.starts(with: [0x89, 0x50, 0x4e, 0x47]) ? ".png" : bytes.starts(with: [0xff, 0xd8]) ? ".jpg" : bytes.starts(with: [0x47, 0x49, 0x46]) ? ".gif" : ".webp"
+            let ext = bytes.starts(with: [0x89, 0x50, 0x4e, 0x47]) ? ".png" : bytes.starts(with: [0xff, 0xd8]) ? ".jpg" : bytes.starts(with: [0x47, 0x49, 0x46]) ? ".gif" : bytes.count >= 12 && bytes.subdata(in: 4..<8) == Data("ftyp".utf8) ? ".heic" : ".webp"
             let url = folder.appendingPathComponent(image.id + ext)
             try bytes.write(to: url, options: .atomic)
             preview = PreviewFile(url: url)

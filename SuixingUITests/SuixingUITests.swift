@@ -32,7 +32,7 @@ import Vision
     func testReadingGroupsProgressAndKeepsFinalAnswerSeparate() {
         let app = launch(["--show-reading"])
         XCTAssertTrue(app.staticTexts["检查结果"].waitForExistence(timeout: 8))
-        let progress = app.otherElements["round-progress-disclosure"]
+        let progress = app.descendants(matching: .any)["round-progress-disclosure"]
         XCTAssertTrue(progress.exists)
         XCTAssertTrue(app.staticTexts["连接正常，可以继续使用。"].exists)
         XCTAssertFalse(app.staticTexts["## 检查结果"].exists)

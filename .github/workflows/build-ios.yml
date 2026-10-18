@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           DEVICE=$(cat .simulator-id)
-          FILTER=()
+          FILTER=(-only-testing:SuixingUITests)
           if [ "${{ inputs.scope }}" = "performance" ]; then FILTER=(-only-testing:SuixingUITests/SuixingUITests/testLargeConversationUsageRefreshDoesNotRebuildHistory); fi
           if [ "${{ inputs.scope }}" = "reader" ]; then
             FILTER=()
