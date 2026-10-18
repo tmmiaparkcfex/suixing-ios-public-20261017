@@ -41,7 +41,7 @@ struct CompactModelPicker: View {
                                             if option.id == model.conversation.controls?.modelId { Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(.green) }
                                             if option.reasoningEfforts?.isEmpty == false { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
                                         }.frame(maxWidth: .infinity, minHeight: 35, alignment: .leading).padding(.horizontal, 9).padding(.vertical, 4).background(option.id == selected?.id ? Color.blue.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
-                                    }.buttonStyle(.plain).disabled(model.working || model.conversation.controls?.canChangeModel != true).id(option.id).accessibilityLabel("选择模型：" + option.label)
+                                    }.buttonStyle(.plain).disabled(model.working || model.controlsLoading || model.conversation.controls?.canChangeModel != true).id(option.id).accessibilityLabel("选择模型：" + option.label)
                                         .background { GeometryReader { row in Color.clear.preference(key: ModelRowPositionKey.self, value: [option.id: row.frame(in: .named("model-options")).minY + 44]) } }
                                 }
                             }.padding(5)
@@ -57,7 +57,7 @@ struct CompactModelPicker: View {
                             ForEach(levels, id: \.self) { level in
                                 Button { if let selected { apply(selected, effort: level) } } label: {
                                     HStack(spacing: 3) { VStack(alignment: .leading, spacing: 2) { Text(effortLabel(level)).font(.system(size: 12)); if let rate = selected?.reasoningOptions?.first(where: { $0.id == level })?.billingLabel { Text(rate).font(.system(size: 9)).foregroundStyle(.secondary) } }; Spacer(minLength: 0); if selected?.id == model.conversation.controls?.modelId && level == model.conversation.controls?.reasoningEffort { Image(systemName: "checkmark").font(.system(size: 9)).foregroundStyle(.green) } }.frame(maxWidth: .infinity, minHeight: 31).padding(.horizontal, 8).contentShape(Rectangle())
-                                }.buttonStyle(.plain).disabled(model.working).accessibilityLabel("选择推理等级：" + level)
+                                }.buttonStyle(.plain).disabled(model.working || model.controlsLoading).accessibilityLabel("选择推理等级：" + level)
                             }
                         }.padding(.vertical, 4)
                     }

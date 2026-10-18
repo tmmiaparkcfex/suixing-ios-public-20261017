@@ -201,7 +201,8 @@ struct ChatView: View {
             GeometryReader { geometry in
                 if modelPicker, let anchor {
                     let rect = geometry[anchor]
-                    let height = min(330, max(220, rect.minY - 16))
+                    let contentHeight = CGFloat(model.conversation.controls?.models.count ?? 0) * 53 + 82
+                    let height = min(min(330, max(165, contentHeight)), max(165, rect.minY - 16))
                     let width = min(354, geometry.size.width - 24)
                     Color.black.opacity(0.04).contentShape(Rectangle()).onTapGesture { modelPicker = false }
                     CompactModelPicker(close: { modelPicker = false }).frame(width: width, height: height)
