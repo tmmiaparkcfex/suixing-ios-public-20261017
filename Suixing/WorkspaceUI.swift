@@ -198,17 +198,7 @@ struct ChatView: View {
         .onChange(of: model.voiceDraftSerial) { _ in voiceMode = false; trayOpen = false; inputFocused = false; composerExpanded = true }
         .onDisappear { model.voiceRecorder.cancel() }
         .overlayPreferenceValue(ModelPickerAnchorKey.self) { anchor in
-            GeometryReader { geometry in
-                if modelPicker, let anchor {
-                    let rect = geometry[anchor]
-                    let contentHeight = CGFloat(model.conversation.controls?.models.count ?? 0) * 53 + 82
-                    let height = min(min(330, max(165, contentHeight)), max(165, rect.minY - 16))
-                    let width = min(354, geometry.size.width - 24)
-                    Color.black.opacity(0.04).contentShape(Rectangle()).onTapGesture { modelPicker = false }
-                    CompactModelPicker(close: { modelPicker = false }).frame(width: width, height: height)
-                        .position(x: geometry.size.width - width / 2 - 12, y: max(height / 2 + 8, rect.minY - height / 2 - 8))
-                }
-            }
+            ModelSelectionOverlay(anchor: anchor, presented: $modelPicker)
         }
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("收起键盘") { inputFocused = false; composerExpanded = false } } }
         .onChange(of: selectedPhotos) { photos in
@@ -398,6 +388,25 @@ struct ChatView: View {
             VoiceRecognitionStatus(voice: model.voiceRecorder)
             UsageFooter(openDetails: { inputFocused = false; openPanel(.usage) })
         }.padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 5).background(.white)
+    }
+}
+
+private struct ModelSelectionOverlay: View {
+    @EnvironmentObject private var model: PocketModel
+    let anchor: Anchor<CGRect>?
+    @Binding var presented: Bool
+    var body: some View {
+        GeometryReader { geometry in
+            if presented, let anchor {
+                let rect: CGRect = geometry[anchor]
+                let desired: CGFloat = max(165, CGFloat(model.conversation.controls?.models.count ?? 0) * 53 + 82)
+                let height: CGFloat = min(330, min(desired, max(165, rect.minY - 16)))
+                let width: CGFloat = min(354, geometry.size.width - 24)
+                Color.black.opacity(0.04).contentShape(Rectangle()).onTapGesture { presented = false }
+                CompactModelPicker(close: { presented = false }).frame(width: width, height: height)
+                    .position(x: geometry.size.width - width / 2 - 12, y: max(height / 2 + 8, rect.minY - height / 2 - 8))
+            }
+        }
     }
 }
 

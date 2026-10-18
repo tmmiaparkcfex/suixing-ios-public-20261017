@@ -811,7 +811,12 @@ private enum Vault {
             let bytes = try await imageData(image, engine: requestedEngine)
             let folder = FileManager.default.temporaryDirectory.appendingPathComponent("图片预览", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let ext = bytes.starts(with: [0x89, 0x50, 0x4e, 0x47]) ? ".png" : bytes.starts(with: [0xff, 0xd8]) ? ".jpg" : bytes.starts(with: [0x47, 0x49, 0x46]) ? ".gif" : bytes.count >= 12 && bytes.subdata(in: 4..<8) == Data("ftyp".utf8) ? ".heic" : ".webp"
+            let ext: String
+            if bytes.starts(with: [0x89, 0x50, 0x4e, 0x47]) { ext = ".png" }
+            else if bytes.starts(with: [0xff, 0xd8]) { ext = ".jpg" }
+            else if bytes.starts(with: [0x47, 0x49, 0x46]) { ext = ".gif" }
+            else if bytes.count >= 12 && bytes.subdata(in: 4..<8) == Data("ftyp".utf8) { ext = ".heic" }
+            else { ext = ".webp" }
             let url = folder.appendingPathComponent(image.id + ext)
             try bytes.write(to: url, options: .atomic)
             preview = PreviewFile(url: url)
