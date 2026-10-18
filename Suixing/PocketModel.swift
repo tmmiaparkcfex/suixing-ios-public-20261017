@@ -58,12 +58,15 @@ private enum Vault {
     @Published var history: [HistoryItem] = []
     let composerDraft = ComposerDraft()
     let voiceRecorder = PhoneVoiceRecorder()
+    @Published var voiceDraftSerial = 0
     var draft: String { get { composerDraft.text } set { composerDraft.text = newValue } }
     var lastDraftEditAt = Date.distantPast
     @Published var preview: PreviewFile?
+    @Published var playback: MediaPlayback?
     @Published var fileLoading = false
     @Published var controlsLoading = false
     @Published var pendingImages: [PendingImage] = []
+    @Published var pendingDocuments: [PendingDocument] = []
     @Published var uploadStatus: String?
     @Published var usageHistory = UsageHistory()
     @Published var accountBudget: AccountBudget?
@@ -170,6 +173,23 @@ private enum Vault {
                 ]
                 conversation.busy = false; conversation.events = []
             }
+            if ProcessInfo.processInfo.arguments.contains("--show-reading") {
+                conversation.messages = [
+                    Message(role: "user", text: "检查一下连接，告诉我能不能用，以及接下来怎么做。", time: now - 120000, itemId: "reading-user"),
+                    Message(role: "assistant", text: "正在检查电脑后台与手机的连接。", time: now - 110000, itemId: "reading-progress-1", phase: "commentary"),
+                    Message(role: "assistant", text: "连接正常，正在核对三款 AI 的会话和余额。", time: now - 100000, itemId: "reading-progress-2", phase: "commentary"),
+                    Message(role: "assistant", text: "## 检查结果\n\n**连接正常，可以继续使用。**\n\nCodex、DSH 和 WorkBuddy 都已连接。手机退出后，电脑仍会继续执行任务。\n\n### 接下来这样做\n\n1. 在顶部选择要使用的 AI。\n2. 从会话列表打开需要继续的对话。\n3. 发送要求，完成后查看回复和附件。\n\n注意：电脑需要保持开机、联网。\n\n| 项目 | 说明 |\n|---|---|\n| 图片与文件 | 直接在对应的回复中打开 |\n| 执行过程 | 点击上方的执行过程，展开查看 |", time: now - 60000, itemId: "reading-answer", phase: "final_answer"),
+                    Message(role: "user", text: "如果重启电脑呢？", time: now - 30000, itemId: "reading-user-2"),
+                    Message(role: "assistant", text: "## 重启后这样连接\n\n1. 打开蒲公英，连接原来的组网。\n2. 打开要使用的电脑 AI 和随行后台。\n3. 在手机随行中打开原对话，继续发送消息。\n\n**原来的对话和设置会保留。**", time: now - 20000, itemId: "reading-answer-2", phase: "final_answer")
+                ]
+                conversation.busy = false; conversation.events = []
+            }
+            if ProcessInfo.processInfo.arguments.contains("--show-media") {
+                let video = MessageFile(id: "preview-video", name: "演示视频.mp4", kind: "video", mimeType: "video/mp4")
+                let pdf = MessageFile(id: "preview-pdf", name: "使用说明.pdf", kind: "file", mimeType: "application/pdf")
+                conversation.messages = [Message(role: "assistant", text: "## 任务附件\n\n[播放演示视频](suixing-file:preview-video)\n\n[查看使用说明](suixing-file:preview-pdf)", time: now - 60000, itemId: "preview-media", phase: "final_answer", documents: [video, pdf])]
+                conversation.busy = false; conversation.events = []
+            }
             if ProcessInfo.processInfo.arguments.contains("--show-editor") {
                 // Photo editor previews are separate from transcript image previews.
                 let picture = UIGraphicsImageRenderer(size: CGSize(width: 900, height: 1200)).image { context in
@@ -264,12 +284,14 @@ private enum Vault {
     }
     func updateControls(_ patch: [String: String]) async {
         guard !working, !controlsLoading, !designPreview else { return }
+        notice = nil
         controlsLoading = true; working = true
         defer { controlsLoading = false; working = false }
         let expectedEngine = engine, expectedThread = conversation.threadId
         do {
             let result = try JSONDecoder().decode(EngineControls.self, from: await data("api/controls", body: patch))
-            if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result }
+            guard patch.allSatisfy({ key, value in key == "modelId" ? result.modelId == value : key == "reasoningEffort" ? result.reasoningEffort == value : result.permissionId == value }), result.confirmed != false else { throw PocketError.message("电脑尚未确认设置，手机没有应用这次切换，请重试。") }
+            if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result; notice = "电脑已确认模型设置。" }
             if engine == "dsh", patch["modelId"] != nil { invalidateAccountBudget() }
             await refresh()
         } catch { handle(error) }
@@ -289,6 +311,7 @@ private enum Vault {
     }
     func selectEngine(_ value: String) {
         guard PocketEngine.all.contains(value), value != engine, !working else { return }
+        voiceRecorder.cancel()
         saveCurrentSnapshot()
         stopUpdates()
         accountBudget = budgetsByEngine[value]
@@ -490,7 +513,7 @@ private enum Vault {
         guard !working else { return }
         working = true; defer { working = false }
         do {
-            if route == "new" { saveCurrentSnapshot(); selectionRevision += 1; lastStateRefresh = .distantPast }
+            if route == "new" { voiceRecorder.cancel(); saveCurrentSnapshot(); selectionRevision += 1; lastStateRefresh = .distantPast }
             _ = try await data("api/" + route, body: body)
             await refresh(force: true)
         }
@@ -498,7 +521,7 @@ private enum Vault {
     }
     func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!text.isEmpty || !pendingImages.isEmpty), !conversation.busy, !working else { return }
+        guard (!text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty), !conversation.busy, !working else { return }
         working = true; defer { working = false }
         defer { uploadStatus = nil }
         do {
@@ -511,26 +534,40 @@ private enum Vault {
                 pendingImages[index].uploadedId = result.id
                 ids.append(result.id)
             }
+            for index in pendingDocuments.indices {
+                if let id = pendingDocuments[index].uploadedId { ids.append(id); continue }
+                uploadStatus = "正在上传文件 \(index + 1)/\(pendingDocuments.count)"
+                let file = pendingDocuments[index]
+                let result = try JSONDecoder().decode(UploadedImage.self, from: await data("api/documents", body: ["name": file.name, "mimeType": file.mimeType, "base64": file.data.base64EncodedString()]))
+                pendingDocuments[index].uploadedId = result.id; ids.append(result.id)
+            }
             _ = try await data("api/send", body: ["text": text, "attachments": ids])
-            draft = ""; pendingImages = []; await refresh()
+            draft = ""; pendingImages = []; pendingDocuments = []; await refresh()
         }
         catch { handle(error) }
     }
-    func addImage(_ original: Data) {
+    func addImage(_ original: Data, assetIdentifier: String? = nil) {
         guard !working else { return }
-        guard pendingImages.count < 5 else { notice = "每条消息最多发送 5 张图片。"; return }
+        guard pendingImages.count + pendingDocuments.count < 5 else { notice = "每条消息最多添加 5 个附件。"; return }
         guard original.count <= 40 * 1024 * 1024,
               let source = CGImageSourceCreateWithData(original as CFData, nil),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 4096] as CFDictionary),
               let data = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.9), data.count <= 10 * 1024 * 1024 else {
             notice = "这张图片无法读取或过大，请换一张截图。"; return
         }
-        pendingImages.append(PendingImage(name: "手机图片-\(pendingImages.count + 1).jpg", data: data))
+        pendingImages.append(PendingImage(name: "手机图片-\(pendingImages.count + 1).jpg", data: data, assetIdentifier: assetIdentifier))
     }
     func replaceImage(_ id: UUID, with data: Data) {
         guard !working, data.count <= 10 * 1024 * 1024, let index = pendingImages.firstIndex(where: { $0.id == id }) else { return }
         let name = pendingImages[index].name
-        pendingImages[index] = PendingImage(name: name, data: data)
+        pendingImages[index] = PendingImage(name: name, data: data, assetIdentifier: pendingImages[index].assetIdentifier)
+    }
+    func addDocument(_ bytes: Data, name: String, mimeType: String) {
+        guard !working else { return }
+        guard pendingImages.count + pendingDocuments.count < 5 else { notice = "每条消息最多添加 5 个附件。"; return }
+        guard !bytes.isEmpty, bytes.count <= 20 * 1024 * 1024 else { notice = "单个文件请控制在20MB以内。"; return }
+        guard pendingImages.reduce(0, { $0 + $1.data.count }) + pendingDocuments.reduce(0, { $0 + $1.data.count }) + bytes.count <= 50 * 1024 * 1024 else { notice = "本条消息的附件总大小不能超过50MB。"; return }
+        pendingDocuments.append(PendingDocument(name: name, data: bytes, mimeType: mimeType))
     }
     func loadUsage() async {
         guard loggedIn, !designPreview, !draggingTokenPanel, !interactingWithTranscript else { return }
@@ -638,6 +675,7 @@ private enum Vault {
     }
     func openHistory(_ id: String) async {
         guard !working, !openingSession else { return }
+        voiceRecorder.cancel()
         if designPreview {
             saveCurrentSnapshot()
             if let item = history.first(where: { $0.id == id }) { conversation.threadId = id; conversation.title = item.title; rememberCurrentSession() }
@@ -684,14 +722,48 @@ private enum Vault {
         guard !fileLoading else { return }
         fileLoading = true; defer { fileLoading = false }
         do {
-            let content = try await data("api/file", query: [URLQueryItem(name: "name", value: name)])
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            let filename = (name as NSString).lastPathComponent
-            let url = folder.appendingPathComponent(filename.isEmpty ? "文件" : filename)
-            try content.write(to: url, options: .atomic)
-            preview = PreviewFile(url: url)
+            let file = try JSONDecoder().decode(MessageFile.self, from: await data("api/file-reference", query: [URLQueryItem(name: "name", value: name)]))
+            try await presentConversationFile(file, engine: engine)
         } catch { handle(error) }
+    }
+    func openConversationFile(_ file: MessageFile, engine requestedEngine: String) async {
+        guard !fileLoading else { return }; fileLoading = true; defer { fileLoading = false }
+        do { try await presentConversationFile(file, engine: requestedEngine) } catch { handle(error) }
+    }
+    private func presentConversationFile(_ file: MessageFile, engine requestedEngine: String) async throws {
+        if file.kind == "video" || file.kind == "audio" { playback = MediaPlayback(file: file, engine: requestedEngine, url: try await mediaAccess(file, engine: requestedEngine)) }
+        else { preview = PreviewFile(url: try await downloadConversationFile(file, engine: requestedEngine)) }
+    }
+    private func mediaAccess(_ file: MessageFile, engine requestedEngine: String) async throws -> URL {
+        #if DEBUG && targetEnvironment(simulator)
+        if designPreview { return try await PreviewMediaFactory.file(file) }
+        #endif
+        if let remote = file.remoteURL {
+            guard let url = URL(string: remote), url.scheme == "https", url.user == nil, url.password == nil else { throw PocketError.message("文件链接无效。") }; return url
+        }
+        var req = try request("api/media-ticket", query: [URLQueryItem(name: "id", value: file.id)])
+        var parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
+        parts.queryItems = (parts.queryItems ?? []).filter { $0.name != "engine" } + [URLQueryItem(name: "engine", value: requestedEngine)]; req.url = parts.url
+        let (bytes, response) = try await session.data(for: req); try check(response, data: bytes)
+        let access = try JSONDecoder().decode(MediaAccess.self, from: bytes).url
+        guard access.scheme == req.url?.scheme, access.host == req.url?.host, access.port == req.url?.port, access.path == "/_pocket/api/media" else { throw PocketError.message("电脑返回的文件地址无效。") }
+        return access
+    }
+    func downloadConversationFile(_ file: MessageFile, engine requestedEngine: String) async throws -> URL {
+        #if DEBUG && targetEnvironment(simulator)
+        if designPreview { return try await PreviewMediaFactory.file(file) }
+        #endif
+        guard file.id.count <= 160, file.id.range(of: "^[-_A-Za-z0-9]+$", options: .regularExpression) != nil else { throw PocketError.message("文件标识无效。") }
+        var req = URLRequest(url: try await mediaAccess(file, engine: requestedEngine)); req.timeoutInterval = 300
+        let configuration = URLSessionConfiguration.ephemeral; configuration.httpCookieStorage = nil; configuration.urlCredentialStorage = nil; configuration.httpShouldSetCookies = false
+        let downloader = URLSession(configuration: configuration); defer { downloader.finishTasksAndInvalidate() }
+        let (temporary, response) = try await downloader.download(for: req); try check(response, data: Data())
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("对话附件", isDirectory: true).appendingPathComponent(file.id, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let name = (file.name as NSString).lastPathComponent
+        let destination = folder.appendingPathComponent(name.isEmpty ? "文件" : name)
+        if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
+        try FileManager.default.moveItem(at: temporary, to: destination); return destination
     }
     func imageData(_ image: MessageImage, engine requestedEngine: String) async throws -> Data {
         #if DEBUG && targetEnvironment(simulator)

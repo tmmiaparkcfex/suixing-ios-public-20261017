@@ -254,10 +254,10 @@ final class TokenOverlayView: UIView, UIGestureRecognizerDelegate {
     private let wave = CAShapeLayer(), glow = CAShapeLayer(), activityDot = UIView()
     private var expanded = false, panning = false, busy = false, motion = true, connected = true
     private var xFraction = UserDefaults.standard.object(forKey: "pocket.tokenOverlayX") as? Double ?? 0.76
-    private var yFraction = UserDefaults.standard.object(forKey: "pocket.tokenOverlayY") as? Double ?? 0.15
+    private var yFraction = UserDefaults.standard.object(forKey: "pocket.tokenOverlayY") as? Double ?? 0.025
     private var origin = CGPoint.zero, pulse: CADisplayLink?, pulseTarget = TokenPulseTarget()
     private var values: [UsageSample] = [], current: TokenUsage?
-    private var cardSize: CGSize { expanded ? CGSize(width: 250, height: 246) : CGSize(width: 198, height: 70) }
+    private var cardSize: CGSize { expanded ? CGSize(width: 250, height: 246) : CGSize(width: 184, height: 44) }
     override init(frame: CGRect) {
         super.init(frame: frame); backgroundColor = .clear
         card.backgroundColor = UIColor.secondarySystemBackground.withAlphaComponent(0.98); card.layer.cornerRadius = 16; card.layer.borderWidth = 0.7; card.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
@@ -297,13 +297,13 @@ final class TokenOverlayView: UIView, UIGestureRecognizerDelegate {
         layoutCard()
     }
     private func layoutCard() {
-        counter.frame = expanded ? CGRect(x: 14, y: 30, width: 208, height: 28) : CGRect(x: 40, y: 3, width: 140, height: 26)
+        counter.frame = expanded ? CGRect(x: 14, y: 30, width: 208, height: 28) : CGRect(x: 37, y: 1, width: 132, height: 22)
         counter.font = .monospacedDigitSystemFont(ofSize: expanded ? 20 : 12, weight: .semibold)
         title.frame = CGRect(x: 14, y: 9, width: 182, height: 18); title.isHidden = !expanded
-        chevron.frame = expanded ? CGRect(x: 203, y: 13, width: 10, height: 9) : CGRect(x: 182, y: 14, width: 8, height: 7); chevron.transform = expanded ? CGAffineTransform(rotationAngle: .pi) : .identity
-        budgetTitle.frame = expanded ? CGRect(x: 14, y: 63, width: 222, height: 17) : CGRect(x: 13, y: 29, width: 172, height: 13)
-        budgetCounter.frame = expanded ? CGRect(x: 14, y: 81, width: 222, height: 26) : CGRect(x: 13, y: 43, width: 172, height: 21)
-        budgetCounter.font = .monospacedDigitSystemFont(ofSize: expanded ? 21 : 13, weight: .semibold)
+        chevron.frame = expanded ? CGRect(x: 203, y: 13, width: 10, height: 9) : CGRect(x: 171, y: 12, width: 7, height: 6); chevron.transform = expanded ? CGAffineTransform(rotationAngle: .pi) : .identity
+        budgetTitle.frame = expanded ? CGRect(x: 14, y: 63, width: 222, height: 17) : CGRect(x: 10, y: 24, width: 87, height: 14)
+        budgetCounter.frame = expanded ? CGRect(x: 14, y: 81, width: 222, height: 26) : CGRect(x: 98, y: 22, width: 78, height: 18)
+        budgetCounter.font = .monospacedDigitSystemFont(ofSize: expanded ? 21 : 11, weight: .semibold)
         resetLabel.frame = CGRect(x: 14, y: 108, width: 222, height: 17); resetLabel.isHidden = !expanded
         remaining.frame = CGRect(x: 14, y: 133, width: 222, height: 20); remaining.isHidden = !expanded
         latestChange.frame = CGRect(x: 14, y: 158, width: 222, height: 17); latestChange.isHidden = !expanded

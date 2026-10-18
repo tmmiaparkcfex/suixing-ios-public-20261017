@@ -1,6 +1,110 @@
 import SwiftUI
 import UIKit
 import PencilKit
+import Photos
+import PhotosUI
+
+@MainActor final class RecentPhotoLibrary: NSObject, ObservableObject, PHPhotoLibraryChangeObserver {
+    @Published var assets: [PHAsset] = []
+    @Published var authorization = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+    @Published var loading = Set<String>()
+    private var observing = false
+    func open() async {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.arguments.contains("--design-preview") { authorization = .denied; return }
+        #endif
+        if authorization == .notDetermined { authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite) }
+        guard authorization == .authorized || authorization == .limited else { return }
+        if !observing { PHPhotoLibrary.shared().register(self); observing = true }
+        reload()
+    }
+    private func reload() {
+        let options = PHFetchOptions(); options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]; options.fetchLimit = 60
+        let result = PHAsset.fetchAssets(with: .image, options: options)
+        var values: [PHAsset] = []; result.enumerateObjects { asset, _, _ in values.append(asset) }; assets = values
+    }
+    nonisolated func photoLibraryDidChange(_ changeInstance: PHChange) { Task { @MainActor [weak self] in self?.reload() } }
+    func bytes(_ asset: PHAsset) async -> Data? {
+        let options = PHImageRequestOptions(); options.version = .current; options.deliveryMode = .highQualityFormat; options.isNetworkAccessAllowed = true
+        return await withCheckedContinuation { continuation in PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { bytes, _, _, _ in continuation.resume(returning: bytes) } }
+    }
+    deinit { if observing { PHPhotoLibrary.shared().unregisterChangeObserver(self) } }
+}
+
+private struct RecentPhotoThumbnail: View {
+    let asset: PHAsset
+    let selected: Bool
+    let loading: Bool
+    let select: () -> Void
+    @State private var picture: UIImage?
+    @State private var request: PHImageRequestID?
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Group { if let picture { Image(uiImage: picture).resizable().scaledToFill() } else { Color(.systemGray5).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } } }
+                .frame(width: 84, height: 104).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
+            Button(action: select) {
+                ZStack {
+                    Circle().fill(selected ? Color.blue : Color.black.opacity(0.32))
+                    Circle().stroke(.white, lineWidth: 1.8)
+                    if loading { ProgressView().tint(.white).scaleEffect(0.65) }
+                    else if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.white) }
+                }.frame(width: 23, height: 23).padding(7).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityLabel(selected ? "取消选择这张照片" : "选择这张照片")
+        }.onAppear {
+            guard picture == nil else { return }
+            let options = PHImageRequestOptions(); options.deliveryMode = .opportunistic; options.resizeMode = .fast; options.isNetworkAccessAllowed = true
+            request = PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 200, height: 250), contentMode: .aspectFill, options: options) { image, _ in if let image { Task { @MainActor in picture = image } } }
+        }.onDisappear { if let request { PHImageManager.default().cancelImageRequest(request) } }
+    }
+}
+
+struct AttachmentTray: View {
+    @EnvironmentObject private var model: PocketModel
+    @StateObject private var library = RecentPhotoLibrary()
+    @Binding var selectedPhotos: [PhotosPickerItem]
+    let camera: () -> Void
+    let files: () -> Void
+    var body: some View {
+        VStack(spacing: 14) {
+            if library.authorization == .authorized || library.authorization == .limited {
+                if library.assets.isEmpty { Text("最近照片会显示在这里").font(.caption).foregroundStyle(.secondary).frame(height: 104) }
+                else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 8) {
+                            ForEach(library.assets, id: \.localIdentifier) { asset in
+                                RecentPhotoThumbnail(asset: asset, selected: model.pendingImages.contains { $0.assetIdentifier == asset.localIdentifier }, loading: library.loading.contains(asset.localIdentifier)) { toggle(asset) }
+                            }
+                        }.padding(.horizontal, 14)
+                    }.frame(height: 104)
+                }
+            } else {
+                HStack(spacing: 10) { Image(systemName: "photo.on.rectangle"); Text("允许相册访问后，可在这里滑动勾选最近照片。相册按钮也可以单独选图。").font(.system(size: 12)).lineSpacing(3) }.foregroundStyle(.secondary).frame(height: 82).padding(.horizontal, 18)
+            }
+            HStack(spacing: 10) {
+                trayButton("拍照", icon: "camera", action: camera)
+                PhotosPicker(selection: $selectedPhotos, maxSelectionCount: max(1, 5 - model.pendingDocuments.count - model.pendingImages.count), matching: .images) { trayLabel("相册", icon: "photo.on.rectangle") }.buttonStyle(.plain).accessibilityLabel("从相册选择截图或照片")
+                trayButton("文件", icon: "paperclip", action: files)
+            }.padding(.horizontal, 14)
+            if library.authorization == .limited { Button("管理允许访问的照片") { if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, let controller = scene.windows.first(where: \.isKeyWindow)?.rootViewController { PHPhotoLibrary.shared().presentLimitedLibraryPicker(from: controller) } }.font(.system(size: 11)).foregroundStyle(.secondary) }
+        }.padding(.vertical, 14).background(Color(.secondarySystemBackground)).accessibilityIdentifier("attachment-tray").task { await library.open() }
+    }
+    private func trayLabel(_ title: String, icon: String) -> some View {
+        VStack(spacing: 9) { Image(systemName: icon).font(.system(size: 24)); Text(title).font(.system(size: 14, weight: .medium)) }.frame(maxWidth: .infinity).frame(height: 82).foregroundStyle(Color.primary).background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+    private func trayButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View { Button(action: action) { trayLabel(title, icon: icon) }.buttonStyle(.plain) }
+    private func toggle(_ asset: PHAsset) {
+        let id = asset.localIdentifier
+        if model.pendingImages.contains(where: { $0.assetIdentifier == id }) { model.pendingImages.removeAll { $0.assetIdentifier == id }; return }
+        if library.loading.contains(id) { library.loading.remove(id); return }
+        guard model.pendingImages.count + model.pendingDocuments.count < 5 else { model.notice = "每条消息最多添加5个附件。"; return }
+        library.loading.insert(id)
+        Task {
+            let bytes = await library.bytes(asset)
+            guard library.loading.remove(id) != nil else { return }
+            if let bytes { model.addImage(bytes, assetIdentifier: id) } else { model.notice = "照片暂时无法读取，请从相册重新选择。" }
+        }
+    }
+}
 
 enum PhotoRendering {
     static func flatten(_ image: UIImage, drawing: PKDrawing, canvasSize: CGSize) -> UIImage {

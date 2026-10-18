@@ -2,6 +2,80 @@ import SwiftUI
 
 private let navigationBlue = Color(red: 0.25, green: 0.43, blue: 0.87)
 
+struct ModelPickerAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) { value = nextValue() ?? value }
+}
+private struct ModelRowPositionKey: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) { value.merge(nextValue(), uniquingKeysWith: { _, new in new }) }
+}
+
+struct CompactModelPicker: View {
+    @EnvironmentObject private var model: PocketModel
+    let close: () -> Void
+    @State private var selectedID: String?
+    @State private var rowPositions: [String: CGFloat] = [:]
+    private var options: [EngineModelOption] { model.conversation.controls?.models ?? [] }
+    private var selected: EngineModelOption? { options.first { $0.id == (selectedID ?? model.conversation.controls?.modelId) } }
+    var body: some View {
+        GeometryReader { geometry in
+            let leftWidth = geometry.size.width * 0.64
+            let levels = selected?.reasoningEfforts ?? []
+            let rightHeight = min(geometry.size.height - 12, CGFloat(max(1, levels.count)) * 35 + 40)
+            HStack(alignment: .top, spacing: 8) {
+                VStack(spacing: 0) {
+                    HStack { Text("模型").font(.system(size: 13, weight: .semibold)); Spacer(); if model.controlsLoading { ProgressView().controlSize(.small) }; Button(action: close) { Image(systemName: "xmark").font(.system(size: 12)) }.accessibilityLabel("关闭模型选择") }.padding(12)
+                    Divider()
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: true) {
+                            LazyVStack(spacing: 2) {
+                                ForEach(options) { option in
+                                    Button {
+                                        selectedID = option.id
+                                        if option.reasoningEfforts?.isEmpty != false { apply(option, effort: nil) }
+                                    } label: {
+                                        HStack(spacing: 5) {
+                                            VStack(alignment: .leading, spacing: 3) { Text(option.label).font(.system(size: 12, weight: option.id == selected?.id ? .semibold : .regular)).lineLimit(2); if let price = option.billingLabel { Text(price).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) } }
+                                            Spacer(minLength: 0)
+                                            if option.id == model.conversation.controls?.modelId { Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(.green) }
+                                            if option.reasoningEfforts?.isEmpty == false { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
+                                        }.frame(maxWidth: .infinity, minHeight: 35, alignment: .leading).padding(.horizontal, 9).padding(.vertical, 4).background(option.id == selected?.id ? Color.blue.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
+                                    }.buttonStyle(.plain).disabled(model.working || model.conversation.controls?.canChangeModel != true).id(option.id).accessibilityLabel("选择模型：" + option.label)
+                                        .background { GeometryReader { row in Color.clear.preference(key: ModelRowPositionKey.self, value: [option.id: row.frame(in: .named("model-options")).minY + 44]) } }
+                                }
+                            }.padding(5)
+                        }.coordinateSpace(name: "model-options").onAppear { if let id = model.conversation.controls?.modelId { proxy.scrollTo(id, anchor: .center) } }
+                    }
+                    if options.allSatisfy({ $0.billingLabel == nil }) { Text("电脑未提供模型倍率").font(.system(size: 10)).foregroundStyle(.secondary).padding(8) }
+                }.frame(width: leftWidth, height: geometry.size.height).background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 13)).overlay { RoundedRectangle(cornerRadius: 13).stroke(Color.primary.opacity(0.09), lineWidth: 1) }
+                VStack(spacing: 0) {
+                    Text(levels.isEmpty ? "推理档位固定" : "推理等级").font(.system(size: 11, weight: .semibold)).padding(.vertical, 10)
+                    Divider()
+                    ScrollView(.vertical, showsIndicators: true) {
+                        VStack(spacing: 2) {
+                            ForEach(levels, id: \.self) { level in
+                                Button { if let selected { apply(selected, effort: level) } } label: {
+                                    HStack(spacing: 3) { VStack(alignment: .leading, spacing: 2) { Text(effortLabel(level)).font(.system(size: 12)); if let rate = selected?.reasoningOptions?.first(where: { $0.id == level })?.billingLabel { Text(rate).font(.system(size: 9)).foregroundStyle(.secondary) } }; Spacer(minLength: 0); if selected?.id == model.conversation.controls?.modelId && level == model.conversation.controls?.reasoningEffort { Image(systemName: "checkmark").font(.system(size: 9)).foregroundStyle(.green) } }.frame(maxWidth: .infinity, minHeight: 31).padding(.horizontal, 8).contentShape(Rectangle())
+                                }.buttonStyle(.plain).disabled(model.working).accessibilityLabel("选择推理等级：" + level)
+                            }
+                        }.padding(.vertical, 4)
+                    }
+                }.frame(maxWidth: .infinity).frame(height: rightHeight).background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 12)).overlay { RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.09), lineWidth: 1) }
+                    .offset(y: min(geometry.size.height - rightHeight, max(0, rowPositions[selected?.id ?? ""] ?? 45)))
+            }
+        }.shadow(color: .black.opacity(0.13), radius: 14, y: 5).onPreferenceChange(ModelRowPositionKey.self) { rowPositions = $0 }.onAppear { selectedID = model.conversation.controls?.modelId }.accessibilityIdentifier("compact-model-picker")
+    }
+    private func effortLabel(_ value: String) -> String { ["off": "关闭", "none": "关闭", "low": "低", "medium": "中", "high": "高", "xhigh": "超高", "max": "最大", "ultra": "极高"][value] ?? value }
+    private func apply(_ option: EngineModelOption, effort: String?) {
+        var patch = ["modelId": option.id]; if let effort { patch["reasoningEffort"] = effort }
+        Task {
+            await model.updateControls(patch)
+            if model.notice == "电脑已确认模型设置。", model.conversation.controls?.modelId == option.id, effort == nil || model.conversation.controls?.reasoningEffort == effort { close() }
+        }
+    }
+}
+
 struct SessionSidebar: View {
     @EnvironmentObject private var model: PocketModel
     let close: () -> Void

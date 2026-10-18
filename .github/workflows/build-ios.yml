@@ -11,7 +11,7 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: ${{ inputs.scope == 'reader' && 'macos-15' || 'macos-15-intel' }}
+    runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -85,8 +85,8 @@ jobs:
             xcrun simctl io "$DEVICE" screenshot "screenshots/$ENGINE-iPhone13Pro-preview.png"
             xcrun simctl terminate "$DEVICE" local.suixing.pocket.zhang
           done
-          for PANEL in token-expanded show-market show-formatting show-images show-editor show-notifications show-questions show-sidebar show-updates show-recording; do
-            xcrun simctl launch "$DEVICE" local.suixing.pocket.zhang --design-preview --engine codex "--$PANEL"
+          for PANEL in token-expanded show-market show-formatting show-reading show-images show-media show-attachments show-voice-input show-model-picker show-editor show-notifications show-questions show-sidebar show-updates show-recording; do
+            xcrun simctl launch "$DEVICE" local.suixing.pocket.zhang --design-preview --reset-overlay-position --engine codex "--$PANEL"
             sleep 3
             xcrun simctl io "$DEVICE" screenshot "screenshots/codex-$PANEL-iPhone13Pro-preview.png"
             xcrun simctl terminate "$DEVICE" local.suixing.pocket.zhang

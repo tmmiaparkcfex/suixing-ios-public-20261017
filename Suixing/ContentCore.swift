@@ -24,6 +24,7 @@ enum ContentBlock: Equatable {
     case table([[String]])
     case divider
     case image(String, String)
+    case attachment(String, String)
     case callout(String, String)
 }
 
@@ -90,6 +91,9 @@ enum ContentParser {
             if let values = groups(heading, line) { flush(); result.append(.heading(values[0].count, values[1])); index += 1; continue }
             if let values = groups(standaloneBold, line) { flush(); result.append(.heading(3, values[0])); index += 1; continue }
             if let image = imageLine(line) { flush(); result.append(.image(image.0, image.1)); index += 1; continue }
+            if line.hasPrefix("["), line.hasSuffix(")"), let marker = line.range(of: "](suixing-file:") {
+                flush(); result.append(.attachment(String(line[line.index(after: line.startIndex)..<marker.lowerBound]), String(line[marker.upperBound..<line.index(before: line.endIndex)]))); index += 1; continue
+            }
             if ["---", "***", "___"].contains(line.replacingOccurrences(of: " ", with: "")) { flush(); result.append(.divider); index += 1; continue }
             if line.hasPrefix(">") {
                 flush(); var quotes: [String] = []
@@ -119,6 +123,41 @@ enum ContentParser {
         if target.hasPrefix("<"), target.hasSuffix(">") { target = String(target.dropFirst().dropLast()) }
         guard target.hasPrefix("suixing-image:") else { return nil }
         return (caption, String(target.dropFirst("suixing-image:".count)))
+    }
+}
+
+struct TranscriptOutlineMessage {
+    let role: String
+    let phase: String?
+    let hasMedia: Bool
+}
+enum TranscriptOutlineItem: Equatable {
+    case message(Int)
+    case progress(Int, [Int])
+}
+enum TranscriptOutline {
+    static func make(_ messages: [TranscriptOutlineMessage], busy: Bool) -> [TranscriptOutlineItem] {
+        var output: [TranscriptOutlineItem] = [], index = 0
+        while index < messages.count {
+            guard messages[index].role == "user" else { output.append(.message(index)); index += 1; continue }
+            let start = index
+            output.append(.message(start)); index += 1
+            var end = index
+            while end < messages.count && messages[end].role != "user" { end += 1 }
+            let lastAssistant = (index..<end).last(where: { messages[$0].role == "assistant" })
+            let active = busy && end == messages.count
+            let folded = (index..<end).filter { i in
+                let m = messages[i]
+                return m.role == "assistant" && !m.hasMedia && m.phase != "final_answer" && (m.phase == "commentary" || active || i != lastAssistant)
+            }
+            let foldedSet = Set(folded)
+            for i in index..<end {
+                if i == folded.first { output.append(.progress(start, folded)) }
+                if !foldedSet.contains(i) { output.append(.message(i)) }
+            }
+            index = end
+        }
+        return output
     }
 }
 

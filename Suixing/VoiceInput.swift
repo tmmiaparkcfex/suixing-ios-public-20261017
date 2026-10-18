@@ -16,7 +16,6 @@ import UIKit
     private var clip: URL?
     private var request: Task<Void, Never>?
     private var generation = 0
-    private var sendAfterRecognition = false
     var timeLimit: (() -> Void)?
     var canRetry: Bool { clip != nil && !recording && !recognizing && failed }
 
@@ -55,13 +54,12 @@ import UIKit
         level = min(1, max(0, pow(10, Double(recorder?.averagePower(forChannel: 0) ?? -60) / 35)))
         if elapsed >= 119.5 || recorder?.isRecording == false { timeLimit?() }
     }
-    func finish(using model: PocketModel, autoSend: Bool = false) {
+    func finish(using model: PocketModel) {
         guard !recognizing, let clip else { return }
-        if recording { sendAfterRecognition = autoSend }
         recording = false; timer?.invalidate(); timer = nil
         elapsed = max(elapsed, recorder?.currentTime ?? 0); recorder?.stop(); recorder = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        recognizing = true; failed = false; message = sendAfterRecognition ? "正在识别，完成后发送到当前 AI…" : "正在用电脑识别语音…"
+        recognizing = true; failed = false; message = "正在用电脑识别语音…"
         let revision = generation, engine = model.engine, thread = model.conversation.threadId, duration = max(0.1, elapsed)
         request = Task { [weak self, weak model] in
             guard let self, let model else { return }
@@ -73,12 +71,9 @@ import UIKit
                 guard model.engine == engine, model.conversation.threadId == thread else { self.failed = true; self.message = "会话已切换，请在当前会话重新识别。"; return }
                 if !model.draft.isEmpty && !model.draft.hasSuffix("\n") { model.draft += "\n" }
                 model.draft += result.text
+                model.voiceDraftSerial += 1
                 try? FileManager.default.removeItem(at: clip); self.clip = nil
-                if self.sendAfterRecognition {
-                    await model.send()
-                    guard !Task.isCancelled, self.generation == revision else { return }
-                    self.message = model.draft.isEmpty ? "语音已识别并发送到电脑。" : "已转成文字，尚未发送，请检查输入框后发送。"
-                } else { self.message = "已转文字，请检查或修改后再发送。" }
+                self.message = "已转文字，请检查或修改后再发送。"
                 self.failed = false
             } catch {
                 guard !Task.isCancelled, self.generation == revision else { return }
@@ -109,27 +104,24 @@ struct VoiceComposerControl: View {
                     dismissKeyboard()
                     voice.timeLimit = { [weak voice, weak model] in
                         guard let voice, let model else { return }
-                        if voice.cancelArmed { voice.cancel() } else { voice.finish(using: model, autoSend: true) }
+                        if voice.cancelArmed { voice.cancel() } else { voice.finish(using: model) }
                     }
                     Task { await voice.start() }
                 }, moved: { voice.cancelArmed = $0 }, end: { cancelled in
                     if voice.recognizing { return }
                     if cancelled || !voice.recording { voice.cancel() }
-                    else { voice.finish(using: model, autoSend: true) }
+                    else { voice.finish(using: model) }
                 }, accessibilityToggle: {
-                    if voice.recording { voice.finish(using: model, autoSend: true) }
+                    if voice.recording { voice.finish(using: model) }
                     else { Task { await voice.start() } }
-                }).frame(width: 130, height: 30)
-                if voice.recognizing { ProgressView().controlSize(.small); Text("识别并发送中").font(.caption).foregroundStyle(.secondary) }
-                else if !voice.recording { Text("上滑取消").font(.system(size: 10)).foregroundStyle(.secondary) }
+                }, centered: true).frame(maxWidth: .infinity).frame(height: 44)
+                if voice.recognizing { ProgressView().controlSize(.small); Text("正在转文字").font(.caption).foregroundStyle(.secondary) }
                 Spacer(minLength: 0)
                 if voice.canRetry { Button("重试识别") { voice.finish(using: model) }.font(.caption) }
                 if voice.recording || voice.recognizing || voice.canRetry { Button("取消") { voice.cancel() }.font(.caption).foregroundStyle(.secondary) }
             }
-            if let message = voice.message { Text(message).font(.system(size: 11)).foregroundStyle(voice.failed ? Color.red : .secondary).fixedSize(horizontal: false, vertical: true) }
         }.onChange(of: model.engine) { _ in voice.cancel() }
             .onChange(of: model.conversation.threadId) { _ in voice.cancel() }
-            .onDisappear { voice.cancel() }
             .onAppear {
                 #if DEBUG && targetEnvironment(simulator)
                 if ProcessInfo.processInfo.arguments.contains("--show-recording") { voice.showPreview() }
@@ -141,10 +133,12 @@ struct VoiceComposerControl: View {
 struct VoiceHoldButton: UIViewRepresentable {
     let enabled: Bool, active: Bool
     let begin: () -> Void, moved: (Bool) -> Void, end: (Bool) -> Void, accessibilityToggle: () -> Void
+    var centered = false
     func makeUIView(context: Context) -> VoiceHoldControl { VoiceHoldControl() }
     func updateUIView(_ view: VoiceHoldControl, context: Context) {
         view.began = begin; view.moved = moved; view.ended = end; view.accessibilityToggle = accessibilityToggle
         view.isUserInteractionEnabled = enabled; view.alpha = enabled ? 1 : 0.45
+        view.centered = centered
         view.caption.text = active ? "录音中…" : "按住说话"; view.backgroundColor = active ? UIColor.systemBlue.withAlphaComponent(0.13) : UIColor.secondarySystemBackground
     }
 }
@@ -152,16 +146,17 @@ struct VoiceHoldButton: UIViewRepresentable {
 final class VoiceHoldControl: UIControl {
     let caption = UILabel()
     private let icon = UIImageView(image: UIImage(systemName: "mic.fill"))
+    var centered = false { didSet { setNeedsLayout() } }
     var began: (() -> Void)?, moved: ((Bool) -> Void)?, ended: ((Bool) -> Void)?, accessibilityToggle: (() -> Void)?
     private var initialY: CGFloat = 0, beganAt: CFTimeInterval = 0, armed = false
     override init(frame: CGRect) {
         super.init(frame: frame); layer.cornerRadius = 14
         caption.font = .systemFont(ofSize: 12, weight: .medium); caption.textColor = .systemBlue; addSubview(caption)
         icon.tintColor = .systemBlue; icon.contentMode = .scaleAspectFit; addSubview(icon)
-        isAccessibilityElement = true; accessibilityTraits = .button; accessibilityLabel = "按住语音输入"; accessibilityHint = "按住说话，松手识别并发送；向上滑动后松手取消。"
+        isAccessibilityElement = true; accessibilityTraits = .button; accessibilityLabel = "按住语音输入"; accessibilityHint = "按住说话，松手识别成文字，确认后再发送；向上滑动后松手取消。"
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func layoutSubviews() { super.layoutSubviews(); icon.frame = CGRect(x: 13, y: 7, width: 15, height: 16); caption.frame = CGRect(x: 36, y: 4, width: bounds.width - 42, height: 22) }
+    override func layoutSubviews() { super.layoutSubviews(); icon.isHidden = centered; icon.frame = CGRect(x: 13, y: 7, width: 15, height: 16); caption.font = .systemFont(ofSize: centered ? 16 : 12, weight: .medium); caption.textAlignment = centered ? .center : .left; caption.frame = centered ? bounds.insetBy(dx: 12, dy: 7) : CGRect(x: 36, y: 4, width: bounds.width - 42, height: 22) }
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         initialY = touch.location(in: window).y; beganAt = CACurrentMediaTime(); armed = false; began?(); return true
     }
@@ -175,6 +170,62 @@ final class VoiceHoldControl: UIControl {
     override func accessibilityActivate() -> Bool { accessibilityToggle?(); return true }
 }
 
+struct VoiceModeToggle: UIViewRepresentable {
+    @EnvironmentObject private var model: PocketModel
+    @ObservedObject var voice: PhoneVoiceRecorder
+    let voiceMode: Bool
+    let tap: () -> Void
+    let dismissKeyboard: () -> Void
+    func makeUIView(context: Context) -> VoiceModeControl { VoiceModeControl() }
+    func updateUIView(_ view: VoiceModeControl, context: Context) {
+        view.isUserInteractionEnabled = !voice.recognizing && !model.working
+        view.keyboard = voiceMode; view.tapped = tap
+        view.began = {
+            dismissKeyboard()
+            voice.timeLimit = { [weak voice, weak model] in guard let voice, let model else { return }; if voice.cancelArmed { voice.cancel() } else { voice.finish(using: model) } }
+            Task { await voice.start() }
+        }
+        view.moved = { voice.cancelArmed = $0 }
+        view.ended = { cancel in if cancel || !voice.recording { voice.cancel() } else { voice.finish(using: model) } }
+    }
+}
+
+final class VoiceModeControl: UIControl {
+    private let icon = UIImageView()
+    var keyboard = false { didSet { icon.image = UIImage(systemName: keyboard ? "keyboard" : "waveform"); accessibilityLabel = keyboard ? "切换到键盘输入" : "按住语音输入" } }
+    var tapped: (() -> Void)?, began: (() -> Void)?, moved: ((Bool) -> Void)?, ended: ((Bool) -> Void)?
+    private var timer: Timer?, holding = false, initialY: CGFloat = 0, cancelled = false
+    override init(frame: CGRect) { super.init(frame: frame); addSubview(icon); icon.tintColor = .label; icon.contentMode = .scaleAspectFit; layer.cornerRadius = 17; layer.borderWidth = 1.2; layer.borderColor = UIColor.label.withAlphaComponent(0.65).cgColor; isAccessibilityElement = true; accessibilityTraits = .button; accessibilityHint = "轻点切换输入方式，长按语音图标直接说话。" }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layoutSubviews() { super.layoutSubviews(); icon.frame = bounds.insetBy(dx: 7, dy: 7) }
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        initialY = touch.location(in: window).y; holding = false; cancelled = false
+        if !keyboard { let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in guard let self, self.isTracking else { return }; self.holding = true; self.began?() }; self.timer = timer; RunLoop.main.add(timer, forMode: .common) }
+        return true
+    }
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool { let value = touch.location(in: window).y - initialY < -70; if value != cancelled { cancelled = value; if holding { moved?(value) } }; return true }
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) { timer?.invalidate(); timer = nil; if holding { ended?(cancelled) } else { tapped?() } }
+    override func cancelTracking(with event: UIEvent?) { timer?.invalidate(); timer = nil; if holding { ended?(true) } }
+    override func accessibilityActivate() -> Bool { tapped?(); return true }
+}
+
+struct VoiceRecognitionStatus: View {
+    @EnvironmentObject private var model: PocketModel
+    @ObservedObject var voice: PhoneVoiceRecorder
+    var body: some View {
+        Group {
+            if let message = voice.message {
+                HStack(spacing: 8) {
+                    if voice.recognizing { ProgressView().controlSize(.mini) }
+                    Text(message).font(.system(size: 11)).foregroundStyle(voice.failed ? Color.red : .secondary)
+                    Spacer(minLength: 0)
+                    if voice.canRetry { Button("重试") { voice.finish(using: model) }.font(.caption) }
+                }.padding(.horizontal, 5).padding(.top, 3)
+            }
+        }.onChange(of: model.engine) { _ in voice.cancel() }.onChange(of: model.conversation.threadId) { _ in voice.cancel() }
+    }
+}
+
 struct VoiceRecordingOverlay: View {
     @ObservedObject var voice: PhoneVoiceRecorder
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -185,7 +236,7 @@ struct VoiceRecordingOverlay: View {
                     Color.black.opacity(0.80)
                     RadialGradient(colors: [(voice.cancelArmed ? Color.red : Color(red: 0.10, green: 0.40, blue: 0.98)).opacity(0.97), (voice.cancelArmed ? Color.red : Color.blue).opacity(0.55), .clear], center: .bottom, startRadius: 10, endRadius: max(geometry.size.width, geometry.size.height * 0.63))
                     VStack(spacing: 32) {
-                        Text(voice.cancelArmed ? "松手取消" : "松手发送，上滑取消").font(.system(size: 17, weight: .medium)).foregroundStyle(.white.opacity(0.85))
+                        Text(voice.cancelArmed ? "松手取消" : "松手转文字，上滑取消").font(.system(size: 17, weight: .medium)).foregroundStyle(.white.opacity(0.85))
                         NativeVoiceWaveform(level: voice.level, reduceMotion: reduceMotion).frame(height: 70).padding(.horizontal, 53)
                         Text(String(format: "%02d:%02d", Int(voice.elapsed) / 60, Int(voice.elapsed) % 60)).font(.system(size: 13, design: .monospaced)).foregroundStyle(.white.opacity(0.6))
                     }.padding(.bottom, max(70, geometry.size.height * 0.09))

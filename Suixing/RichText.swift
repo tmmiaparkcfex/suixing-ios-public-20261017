@@ -1,6 +1,9 @@
 import SwiftUI
 import UIKit
 import ImageIO
+import AVKit
+import AVFoundation
+import CoreVideo
 
 private final class ParsedContent: NSObject {
     let blocks: [ContentBlock]
@@ -48,7 +51,7 @@ enum MessageRenderPreparation {
                 switch block {
                 case .paragraph(let text), .heading(_, let text), .listItem(_, let text, _), .quote(let text), .callout(_, let text): _ = InlineEmphasis.styled(text)
                 case .table(let rows): for row in rows { for text in row { _ = InlineEmphasis.styled(text) } }
-                case .code, .divider, .image: break
+                case .code, .divider, .image, .attachment: break
                 }
             }
         }
@@ -59,7 +62,8 @@ struct RichMessageText: View, Equatable {
     let text: String
     var images: [MessageImage] = []
     var engine: String = "codex"
-    static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text && lhs.images == rhs.images && lhs.engine == rhs.engine }
+    var documents: [MessageFile] = []
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.text == rhs.text && lhs.images == rhs.images && lhs.engine == rhs.engine && lhs.documents == rhs.documents }
     var body: some View {
         VStack(alignment: .leading, spacing: 17) {
             ForEach(Array(ContentCache.blocks(text).enumerated()), id: \.offset) { _, block in blockView(block) }
@@ -83,6 +87,9 @@ struct RichMessageText: View, Equatable {
         case .image(let caption, let id):
             if let image = images.first(where: { $0.id == id }) { ConversationImageView(image: image, engine: engine) }
             else { Label(caption.isEmpty ? "图片暂不可用，请重新同步" : caption + " · 请重新同步", systemImage: "photo").font(.callout).foregroundStyle(.secondary) }
+        case .attachment(let caption, let id):
+            if let file = documents.first(where: { $0.id == id }) { ConversationFileView(file: file, engine: engine) }
+            else { Label(caption + " · 请重新同步", systemImage: "doc").font(.callout).foregroundStyle(.secondary) }
         case .callout(let label, let text):
             VStack(alignment: .leading, spacing: 8) {
                 Label(label, systemImage: label == "警告" || label == "注意" ? "exclamationmark.circle.fill" : "info.circle.fill").font(.system(size: 14, weight: .bold)).foregroundStyle(Color.blue)
@@ -192,3 +199,77 @@ struct ConversationImageView: View {
         }
     }
 }
+
+struct ConversationFileView: View {
+    @EnvironmentObject private var model: PocketModel
+    let file: MessageFile
+    let engine: String
+    var body: some View {
+        Button { Task { await model.openConversationFile(file, engine: engine) } } label: {
+            HStack(spacing: 12) {
+                Image(systemName: file.icon).font(.system(size: 25)).foregroundStyle(.blue).frame(width: 32)
+                VStack(alignment: .leading, spacing: 5) { Text(file.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.primary).lineLimit(2); Text(file.actionLabel + (file.size.map { " · " + ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "")).font(.system(size: 11)).foregroundStyle(.secondary) }
+                Spacer(minLength: 0)
+                if model.fileLoading { ProgressView().controlSize(.small) } else { Image(systemName: file.kind == "video" || file.kind == "audio" ? "play.fill" : "arrow.up.right").font(.system(size: 12)).foregroundStyle(.secondary) }
+            }.padding(13).frame(maxWidth: .infinity, alignment: .leading).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+        }.buttonStyle(.plain).disabled(model.fileLoading).accessibilityLabel(file.actionLabel + "：" + file.name).accessibilityIdentifier("conversation-file-" + file.id)
+    }
+}
+
+struct MediaPlaybackSheet: View {
+    @EnvironmentObject private var model: PocketModel
+    @Environment(\.dismiss) private var dismiss
+    let item: MediaPlayback
+    @State private var player: AVPlayer?
+    @State private var failure: String?
+    @State private var downloading = false
+    @State private var sharedFile: PreviewFile?
+    @State private var ready = false
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                VideoPlayer(player: player).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black).accessibilityIdentifier("conversation-media-player").accessibilityValue(ready ? "ready" : "loading")
+                if let failure { Text(failure).font(.caption).foregroundStyle(.secondary).padding(.horizontal) }
+                Button {
+                    downloading = true
+                    Task { do { sharedFile = PreviewFile(url: try await model.downloadConversationFile(item.file, engine: item.engine)) } catch { failure = error.localizedDescription }; downloading = false }
+                } label: { HStack { if downloading { ProgressView() }; Label(downloading ? "正在下载…" : "下载并在其他 App 打开", systemImage: "square.and.arrow.up") }.font(.callout).padding(.bottom, 16) }.disabled(downloading)
+            }.navigationTitle(item.file.name).navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }.sheet(item: $sharedFile) { file in ShareSheet(url: file.url) }
+            .onAppear { try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback); try? AVAudioSession.sharedInstance().setActive(true); player = AVPlayer(url: item.url); player?.play() }
+            .onDisappear { player?.pause(); player = nil; try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+            .task { while !Task.isCancelled { try? await Task.sleep(nanoseconds: 500_000_000); if player?.currentItem?.status == .readyToPlay { ready = true }; if player?.currentItem?.status == .failed { failure = player?.currentItem?.error?.localizedDescription ?? "当前格式无法直接播放，请下载后选择其他 App 打开。"; break } } }
+    }
+}
+
+#if DEBUG && targetEnvironment(simulator)
+@MainActor enum PreviewMediaFactory {
+    static func file(_ file: MessageFile) async throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("合成附件验收", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appendingPathComponent(file.name)
+        if FileManager.default.fileExists(atPath: url.path) { return url }
+        if file.kind != "video" {
+            let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+            try renderer.writePDF(to: url) { context in context.beginPage(); ("随行 · 合成文档验收\n\n这一页来自本机生成的 PDF，用于检查原生预览和分享。" as NSString).draw(in: CGRect(x: 45, y: 70, width: 500, height: 600), withAttributes: [.font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.black]) }
+            return url
+        }
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 240])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB, kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 240])
+        writer.add(input); guard writer.startWriting() else { throw PocketError.message("合成验收视频无法创建。") }; writer.startSession(atSourceTime: .zero)
+        for frame in 0..<4 {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 10_000_000); if writer.status == .failed { throw writer.error ?? PocketError.message("视频编码失败。") } }
+            var buffer: CVPixelBuffer?
+            guard CVPixelBufferCreate(kCFAllocatorDefault, 320, 240, kCVPixelFormatType_32ARGB, nil, &buffer) == kCVReturnSuccess, let buffer else { throw PocketError.message("视频帧创建失败。") }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let address = CVPixelBufferGetBaseAddress(buffer) { address.initializeMemory(as: UInt8.self, repeating: UInt8(80 + frame * 35), count: CVPixelBufferGetBytesPerRow(buffer) * 240) }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 2)) else { throw writer.error ?? PocketError.message("视频帧写入失败。") }
+        }
+        input.markAsFinished(); writer.endSession(atSourceTime: CMTime(value: 2, timescale: 1))
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in writer.finishWriting { continuation.resume() } }
+        guard writer.status == .completed else { throw writer.error ?? PocketError.message("视频文件未完成。") }; return url
+    }
+}
+#endif

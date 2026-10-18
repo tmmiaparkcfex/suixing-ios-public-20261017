@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import PhotosUI
+import UniformTypeIdentifiers
 
 private let inkBlue = Color(red: 0.25, green: 0.43, blue: 0.87)
 private let softInk = Color(red: 0.56, green: 0.57, blue: 0.60)
@@ -52,6 +53,7 @@ struct WorkspaceView: View {
         .sheet(item: Binding(get: { panel == nil ? model.preview : nil }, set: { model.preview = $0 })) { file in
             FilePreviewSheet(url: file.url)
         }
+        .sheet(item: $model.playback) { item in MediaPlaybackSheet(item: item) }
         .confirmationDialog("新建对话？当前会话会保留在记录中。", isPresented: $confirmNew, titleVisibility: .visible) {
             Button("新建对话") { Task { await model.act("new") } }
         }
@@ -157,6 +159,10 @@ struct ChatView: View {
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var cameraPresented = false
     @State private var imagePreview: PendingImage?
+    @State private var voiceMode = false
+    @State private var trayOpen = false
+    @State private var documentPicker = false
+    @State private var modelPicker = false
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 27) {
@@ -179,14 +185,33 @@ struct ChatView: View {
             VStack(spacing: 0) {
                 if let questions = model.conversation.questions, !questions.isEmpty { InlineQuestionDock(requests: questions, showAll: { inputFocused = false; openPanel(.questions) }) }
                 composer
+                if trayOpen {
+                    AttachmentTray(selectedPhotos: $selectedPhotos, camera: {
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) { cameraPresented = true } else { model.notice = "当前设备无法使用相机。" }
+                    }, files: { documentPicker = true }).transition(.move(edge: .bottom).combined(with: .opacity)).disabled(model.working)
+                }
             }.background(.white)
         }
-        .onChange(of: inputFocused) { value in composerExpanded = value }
-        .onChange(of: model.engine) { _ in inputFocused = false; composerExpanded = false }
+        .onChange(of: inputFocused) { value in composerExpanded = value; if value { voiceMode = false; trayOpen = false } }
+        .onChange(of: model.engine) { _ in inputFocused = false; composerExpanded = false; modelPicker = false; trayOpen = false }
+        .onChange(of: model.conversation.threadId) { _ in modelPicker = false }
+        .onChange(of: model.voiceDraftSerial) { _ in voiceMode = false; trayOpen = false; inputFocused = false; composerExpanded = true }
+        .onDisappear { model.voiceRecorder.cancel() }
+        .overlayPreferenceValue(ModelPickerAnchorKey.self) { anchor in
+            GeometryReader { geometry in
+                if modelPicker, let anchor {
+                    let rect = geometry[anchor]
+                    let height = min(330, max(220, rect.minY - 16))
+                    let width = min(354, geometry.size.width - 24)
+                    Color.black.opacity(0.04).contentShape(Rectangle()).onTapGesture { modelPicker = false }
+                    CompactModelPicker(close: { modelPicker = false }).frame(width: width, height: height)
+                        .position(x: geometry.size.width - width / 2 - 12, y: max(height / 2 + 8, rect.minY - height / 2 - 8))
+                }
+            }
+        }
         .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("收起键盘") { inputFocused = false; composerExpanded = false } } }
         .onChange(of: selectedPhotos) { photos in
             Task {
-                let previousIds = Set(model.pendingImages.map(\.id))
                 for photo in photos {
                     do {
                         let data = try await photo.loadTransferable(type: Data.self)
@@ -196,7 +221,6 @@ struct ChatView: View {
                     }
                 }
                 selectedPhotos = []
-                imagePreview = model.pendingImages.first(where: { !previousIds.contains($0.id) })
             }
         }
         .sheet(isPresented: $cameraPresented) {
@@ -205,6 +229,20 @@ struct ChatView: View {
                 cameraPresented = false
                 if image != nil { DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { imagePreview = model.pendingImages.last } }
             }.ignoresSafeArea()
+        }
+        .fileImporter(isPresented: $documentPicker, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
+            Task { @MainActor in
+                do {
+                    for url in try result.get().prefix(5) {
+                        let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
+                        let info = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                        guard info.isRegularFile == true, (info.fileSize ?? 0) <= 20 * 1024 * 1024 else { model.notice = "请选择20MB以内的文件。"; continue }
+                        let bytes = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
+                        let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
+                        if mime.hasPrefix("image/") { model.addImage(bytes) } else { model.addDocument(bytes, name: url.lastPathComponent, mimeType: mime) }
+                    }
+                } catch { model.notice = "文件读取失败，请重新选择。" }
+            }
         }
         .sheet(item: $imagePreview) { image in
             ImageEditorView(imageData: image.data) { output in
@@ -215,6 +253,10 @@ struct ChatView: View {
         .onAppear {
             #if DEBUG && targetEnvironment(simulator)
             if ProcessInfo.processInfo.arguments.contains("--show-editor") { imagePreview = model.pendingImages.first }
+            if ProcessInfo.processInfo.arguments.contains("--show-attachments") { trayOpen = true }
+            if ProcessInfo.processInfo.arguments.contains("--show-voice-input") { voiceMode = true }
+            if ProcessInfo.processInfo.arguments.contains("--show-model-picker") { modelPicker = true }
+            if ProcessInfo.processInfo.arguments.contains("--show-recording") { model.voiceRecorder.showPreview() }
             #endif
         }
     }
@@ -227,8 +269,8 @@ struct ChatView: View {
     }
     private var messages: some View {
         NativeTranscriptView(model: model, conversationKey: model.engine + ":" + (model.conversation.threadId ?? ""), jumpToken: jumpToken,
-            initialFollowLatest: !(model.designPreview && (ProcessInfo.processInfo.arguments.contains("--show-formatting") || ProcessInfo.processInfo.arguments.contains("--show-images"))),
-            progress: !model.currentSteps.isEmpty || model.conversation.busy ? AnyView(inlineProgress.environmentObject(model)) : nil,
+            initialFollowLatest: !(model.designPreview && ["--show-formatting", "--show-images", "--show-reading", "--show-media"].contains(where: ProcessInfo.processInfo.arguments.contains)),
+            progress: model.conversation.busy ? AnyView(inlineProgress.environmentObject(model)) : nil,
             progressRevision: "\(model.conversation.busy)-\(model.conversation.events.count)-\(model.conversation.events.last?.summary ?? "")",
             emptyState: AnyView(emptyState.environmentObject(model)), onFollowingLatest: { followingLatest = $0 })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -309,48 +351,50 @@ struct ChatView: View {
                     }
                 }
                 if let status = model.uploadStatus { Text(status).font(.caption).foregroundStyle(inkBlue) }
-                HStack(alignment: .top, spacing: 5) {
-                    ComposerTextInput(draft: model.composerDraft, focused: $inputFocused, expanded: composerExpanded, disabled: model.working, edited: { model.lastDraftEditAt = Date() })
-                    Button {
-                        composerExpanded.toggle()
-                        if !composerExpanded { inputFocused = false }
-                    } label: { Image(systemName: composerExpanded ? "chevron.down" : "chevron.up").font(.system(size: 12, weight: .semibold)).frame(width: 30, height: 24) }
-                        .foregroundStyle(softInk).accessibilityLabel(composerExpanded ? "收起输入框和键盘" : "展开输入框")
-                }.padding(.horizontal, 3).padding(.top, 2)
-                HStack(spacing: 10) {
-                    Menu {
-                        Button(action: newChat) { Label(model.canCreateSession ? "新建对话" : "新对话请在电脑创建", systemImage: "square.and.pencil") }.disabled(!model.canCreateSession)
-                        Button { openPanel(.history) } label: { Label("电脑会话", systemImage: "clock.arrow.circlepath") }
-                        Button { inputFocused = false; openPanel(.files) } label: { Label("任务文件", systemImage: "folder") }
-                        Button {
-                            inputFocused = false
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) { cameraPresented = true }
-                            else { model.notice = "当前设备无法使用相机，请从相册选择图片。" }
-                        } label: { Label("拍照发送", systemImage: "camera") }.disabled(model.working)
-                        Button { if let image = UIPasteboard.general.image, let data = image.pngData() { model.addImage(data) } else { model.notice = "剪贴板中没有图片。" } } label: { Label("粘贴图片", systemImage: "doc.on.clipboard") }.disabled(model.working)
-                        Button { openPanel(.reference) } label: { Label("引用电脑文件", systemImage: "paperclip") }
-                        Button { if let text = UIPasteboard.general.string { model.draft += text } } label: { Label("粘贴文字", systemImage: "doc.on.clipboard") }
-                    } label: { Image(systemName: "plus").font(.system(size: 22)).frame(width: 23, height: 32) }
-                    PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 5, matching: .images) { Image(systemName: "photo.on.rectangle").font(.system(size: 19)) }.disabled(model.working).accessibilityLabel("从相册选择截图或照片")
-                    Button { inputFocused = false; openPanel(.permissions) } label: {
-                        HStack(spacing: 3) { Image(systemName: "checkmark.shield"); Text(model.permissionLabel).lineLimit(1); Image(systemName: "chevron.down").font(.system(size: 7)) }
-                            .font(.system(size: 10)).frame(maxWidth: 92)
+                if !model.pendingDocuments.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 9) {
+                            ForEach(model.pendingDocuments) { file in
+                                HStack(spacing: 7) { Image(systemName: "doc.fill").foregroundStyle(inkBlue); Text(file.name).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 150); Button { model.pendingDocuments.removeAll { $0.id == file.id } } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }.accessibilityLabel("移除文件：" + file.name) }.padding(10).background(Color(.systemGray6), in: RoundedRectangle(cornerRadius: 10))
+                            }
+                        }
+                    }
+                }
+                if voiceMode {
+                    VoiceComposerControl(voice: model.voiceRecorder, dismissKeyboard: { inputFocused = false; composerExpanded = false })
+                } else {
+                    HStack(alignment: .top, spacing: 5) {
+                        ComposerTextInput(draft: model.composerDraft, focused: $inputFocused, expanded: composerExpanded, disabled: model.working, edited: { model.lastDraftEditAt = Date() })
+                        Button { composerExpanded.toggle(); if !composerExpanded { inputFocused = false } } label: { Image(systemName: composerExpanded ? "chevron.down" : "chevron.up").font(.system(size: 12, weight: .semibold)).frame(width: 26, height: 24) }.foregroundStyle(softInk).accessibilityLabel(composerExpanded ? "收起输入框和键盘" : "展开输入框")
+                    }.padding(.horizontal, 3).padding(.top, 2)
+                }
+                HStack(spacing: 8) {
+                    Button { inputFocused = false; modelPicker = false; openPanel(.permissions) } label: {
+                        HStack(spacing: 3) { Image(systemName: "checkmark.shield"); Text(model.permissionLabel).lineLimit(1); Image(systemName: "chevron.down").font(.system(size: 7)) }.font(.system(size: 10)).frame(maxWidth: 70)
                     }.accessibilityLabel("切换权限：" + model.permissionLabel)
-                    Spacer(minLength: 1)
-                    Button { inputFocused = false; openPanel(.models) } label: {
-                        HStack(spacing: 3) { Text(model.modelAndEffortLabel).lineLimit(1).truncationMode(.middle).minimumScaleFactor(0.8); Image(systemName: "chevron.down").font(.system(size: 7)) }
-                            .font(.system(size: 10)).frame(maxWidth: 118)
-                    }.accessibilityLabel("切换模型：" + model.modelLabel)
-                    if model.working { ProgressView().scaleEffect(0.75) }
+                    Button {
+                        inputFocused = false; trayOpen = false
+                        modelPicker.toggle()
+                        if modelPicker { Task { await model.loadControls() } }
+                    } label: {
+                        HStack(spacing: 3) { Text(model.modelAndEffortLabel).lineLimit(1).truncationMode(.middle).minimumScaleFactor(0.75); Image(systemName: "chevron.down").font(.system(size: 7)) }.font(.system(size: 11)).frame(maxWidth: .infinity, alignment: .trailing)
+                    }.accessibilityLabel("切换模型：" + model.modelLabel).anchorPreference(key: ModelPickerAnchorKey.self, value: .bounds) { $0 }
+                    Button {
+                        inputFocused = false; composerExpanded = false; modelPicker = false
+                        withAnimation(.easeOut(duration: 0.2)) { trayOpen.toggle() }
+                    } label: { Image(systemName: trayOpen ? "xmark" : "plus").font(.system(size: 17, weight: .medium)).frame(width: 30, height: 30).overlay { Circle().stroke(Color.primary.opacity(0.65), lineWidth: 1.2) } }.accessibilityLabel(trayOpen ? "收起附件面板" : "添加照片和文件")
+                    VoiceModeToggle(voice: model.voiceRecorder, voiceMode: voiceMode, tap: {
+                        trayOpen = false; modelPicker = false; voiceMode.toggle(); inputFocused = !voiceMode; composerExpanded = !voiceMode
+                    }, dismissKeyboard: { inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false }).frame(width: 32, height: 32)
                     ComposerSendButton(draft: model.composerDraft) {
-                        inputFocused = false; composerExpanded = false
+                        inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false
                         Task { if model.conversation.busy { await model.act("stop") } else { await model.send() } }
                     }
                 }.foregroundStyle(Color(.darkGray))
             }.padding(13).background(.white, in: RoundedRectangle(cornerRadius: 21))
                 .overlay { RoundedRectangle(cornerRadius: 21).stroke(hairline, lineWidth: 1) }
                 .shadow(color: .black.opacity(0.035), radius: 9, y: 2)
-            VoiceComposerControl(voice: model.voiceRecorder, dismissKeyboard: { inputFocused = false; composerExpanded = false }).padding(.horizontal, 9)
+            VoiceRecognitionStatus(voice: model.voiceRecorder)
             UsageFooter(openDetails: { inputFocused = false; openPanel(.usage) })
         }.padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 5).background(.white)
     }
@@ -375,7 +419,7 @@ private struct ComposerSendButton: View {
     @EnvironmentObject private var model: PocketModel
     @ObservedObject var draft: ComposerDraft
     let send: () -> Void
-    private var disabled: Bool { model.working || (!model.conversation.busy && draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingImages.isEmpty) }
+    private var disabled: Bool { model.working || (!model.conversation.busy && draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingImages.isEmpty && model.pendingDocuments.isEmpty) }
     var body: some View {
         Button(action: send) {
             Image(systemName: model.conversation.busy ? "stop.fill" : "arrow.up")
@@ -383,6 +427,28 @@ private struct ComposerSendButton: View {
                 .foregroundStyle(.white).frame(width: 40, height: 40).background(inkBlue, in: Circle())
         }.buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.4 : 1)
             .accessibilityLabel(model.conversation.busy ? "停止当前任务" : "发送指令")
+    }
+}
+
+struct ProgressMessagesView: View {
+    let messages: [Message]
+    let engine: String
+    let opening: () -> Void
+    @State private var expanded = false
+    var body: some View {
+        DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { value in opening(); expanded = value })) {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Array(messages.enumerated()), id: \.offset) { index, message in
+                    if index > 0 { Divider() }
+                    RichMessageText(text: message.text, images: message.images ?? [], engine: engine, documents: message.documents ?? []).textSelection(.enabled)
+                }
+            }.padding(.top, 12)
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                Label("执行过程 · \(messages.count) 条", systemImage: "list.bullet.rectangle").font(.system(size: 12, weight: .medium))
+                if let message = messages.last, !expanded { Text(message.text.replacingOccurrences(of: "**", with: "")).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2) }
+            }
+        }.tint(inkBlue).padding(12).background(Color(.secondarySystemBackground).opacity(0.6), in: RoundedRectangle(cornerRadius: 12)).accessibilityIdentifier("round-progress-disclosure")
     }
 }
 
@@ -409,8 +475,9 @@ struct MessageBubble: View {
             HStack(alignment: .top, spacing: 0) {
                 if isUser { Spacer(minLength: 40) }
                 VStack(alignment: .leading, spacing: 15) {
-                    if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { RichMessageText(text: message.text, images: message.images ?? [], engine: engine).equatable().textSelection(.enabled) }
+                    if !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { RichMessageText(text: message.text, images: message.images ?? [], engine: engine, documents: message.documents ?? []).equatable().textSelection(.enabled) }
                     ForEach((message.images ?? []).filter { $0.inline != true }) { image in ConversationImageView(image: image, engine: engine) }
+                    ForEach((message.documents ?? []).filter { !message.text.contains("](suixing-file:" + $0.id + ")") }) { file in ConversationFileView(file: file, engine: engine) }
                 }
                     .padding(isUser ? 14 : 0)
                     .background(isUser ? Color(red: 0.935, green: 0.943, blue: 0.998) : .clear, in: RoundedRectangle(cornerRadius: 20))

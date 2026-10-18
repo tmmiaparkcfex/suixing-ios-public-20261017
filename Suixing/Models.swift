@@ -71,6 +71,14 @@ struct PendingImage: Identifiable {
     let name: String
     let data: Data
     var uploadedId: String?
+    var assetIdentifier: String?
+}
+struct PendingDocument: Identifiable {
+    let id = UUID()
+    let name: String
+    let data: Data
+    let mimeType: String
+    var uploadedId: String?
 }
 struct UploadedImage: Decodable {
     let id: String
@@ -105,6 +113,7 @@ struct Message: Decodable, Equatable {
     var itemId: String?
     var phase: String?
     var images: [MessageImage]? = nil
+    var documents: [MessageFile]? = nil
     var isTurnUsage: Bool { usage?.source?.contains("turn") == true }
 }
 
@@ -116,6 +125,23 @@ struct MessageImage: Decodable, Identifiable, Equatable {
     var inline: Bool?
     var remoteURL: String?
 }
+struct MessageFile: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    var kind: String?
+    var mimeType: String?
+    var size: Double?
+    var remoteURL: String?
+    var icon: String { kind == "video" ? "play.rectangle.fill" : kind == "audio" ? "waveform" : kind == "image" ? "photo.fill" : "doc.fill" }
+    var actionLabel: String { kind == "video" ? "播放视频" : kind == "audio" ? "播放音频" : "查看文件" }
+}
+struct MediaPlayback: Identifiable {
+    let id = UUID()
+    let file: MessageFile
+    let engine: String
+    let url: URL
+}
+struct MediaAccess: Decodable { let url: URL }
 
 struct TokenUsage: Decodable, Equatable {
     var totalTokens: Double?
@@ -169,6 +195,13 @@ struct EngineModelOption: Decodable, Identifiable {
     let id: String
     let label: String
     var reasoningEfforts: [String]?
+    var billingLabel: String?
+    var reasoningOptions: [EngineReasoningOption]?
+}
+struct EngineReasoningOption: Decodable, Identifiable {
+    let id: String
+    var label: String?
+    var billingLabel: String?
 }
 struct EnginePermissionOption: Decodable, Identifiable {
     let id: String
@@ -187,6 +220,7 @@ struct EngineControls: Decodable {
     var canChangePermissions: Bool?
     var canChangeReasoning: Bool?
     var disabledReason: String?
+    var confirmed: Bool?
 }
 
 struct QuestionRequest: Decodable, Identifiable {

@@ -29,6 +29,31 @@ import Vision
         table.swipeUp()
         XCTAssertTrue(app.buttons["conversation-image-preview-phone"].waitForExistence(timeout: 8))
     }
+    func testReadingGroupsProgressAndKeepsFinalAnswerSeparate() {
+        let app = launch(["--show-reading"])
+        XCTAssertTrue(app.staticTexts["检查结果"].waitForExistence(timeout: 8))
+        let progress = app.otherElements["round-progress-disclosure"]
+        XCTAssertTrue(progress.exists)
+        XCTAssertTrue(app.staticTexts["连接正常，可以继续使用。"].exists)
+        XCTAssertFalse(app.staticTexts["## 检查结果"].exists)
+        let table = app.tables["transcript-table"]
+        table.swipeUp()
+        XCTAssertTrue(app.staticTexts["重启后这样连接"].waitForExistence(timeout: 8))
+        assertVisibleMessage(table)
+    }
+    func testConversationPDFAndVideoPreview() {
+        let app = launch(["--show-media"])
+        let pdf = app.buttons["conversation-file-preview-pdf"]
+        XCTAssertTrue(pdf.waitForExistence(timeout: 8)); pdf.tap()
+        XCTAssertTrue(app.buttons["完成"].waitForExistence(timeout: 10)); app.buttons["完成"].tap()
+        app.buttons["conversation-file-preview-video"].tap()
+        let player = app.descendants(matching: .any)["conversation-media-player"]
+        XCTAssertTrue(player.waitForExistence(timeout: 10))
+        expectation(for: NSPredicate(format: "value == %@", "ready"), evaluatedWith: player)
+        waitForExpectations(timeout: 15)
+        XCTAssertTrue(app.buttons["下载并在其他 App 打开"].exists)
+        app.buttons["完成"].tap()
+    }
     func testFloatingPanelFollowsFinger() {
         let app = launch(), counter = app.staticTexts["token-total"]
         XCTAssertTrue(counter.waitForExistence(timeout: 8))
@@ -105,14 +130,29 @@ import Vision
         // rather than treating normal cell reuse as a full-history rebuild.
         assertVisibleMessage(table)
     }
-    func testHoldVoiceReleaseRecognizesAndSends() {
+    func testHoldVoiceReleaseDraftCanBeEditedBeforeManualSend() {
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--voice-fixture"]; app.launch()
         XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
         app.buttons["按住语音输入"].press(forDuration: 0.6)
         let input = app.descendants(matching: .any)["composer-text"]
-        XCTAssertTrue(app.staticTexts["语音已识别并发送到电脑。"].waitForExistence(timeout: 10))
-        XCTAssertNotEqual(input.value as? String, "帮我整理截图，完成后提醒我。")
-        XCTAssertTrue(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["已转文字，请检查或修改后再发送。"].waitForExistence(timeout: 10))
+        XCTAssertEqual(input.value as? String, "帮我整理截图，完成后提醒我。")
+        XCTAssertFalse(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].exists)
+        input.tap(); input.typeText(" Please check first.")
+        app.buttons["发送指令"].tap()
+        XCTAssertTrue(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。 Please check first."].waitForExistence(timeout: 8))
+    }
+    func testVoiceModeReturnsToDraftAndPreservesTypedText() {
+        let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--voice-fixture"]; app.launch()
+        XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
+        let input = app.descendants(matching: .any)["composer-text"]
+        input.tap(); input.typeText("Original draft")
+        app.buttons["按住语音输入"].tap()
+        XCTAssertTrue(app.buttons["切换到键盘输入"].exists)
+        app.buttons["按住语音输入"].press(forDuration: 0.6)
+        XCTAssertTrue(app.staticTexts["已转文字，请检查或修改后再发送。"].waitForExistence(timeout: 10))
+        XCTAssertEqual(input.value as? String, "Original draft\n帮我整理截图，完成后提醒我。")
+        XCTAssertFalse(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].exists)
     }
     func testHoldVoiceSlideUpCancelsWithoutSending() {
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--voice-fixture"]; app.launch()
@@ -121,7 +161,46 @@ import Vision
         start.press(forDuration: 0.4, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -140)))
         XCTAssertFalse(app.otherElements["voice-recording-overlay"].exists)
         XCTAssertFalse(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].exists)
-        XCTAssertFalse(app.staticTexts["语音已识别并发送到电脑。"].exists)
+        XCTAssertFalse(app.staticTexts["已转文字，请检查或修改后再发送。"].exists)
+        let input = app.descendants(matching: .any)["composer-text"]
+        XCTAssertNotEqual(input.value as? String, "帮我整理截图，完成后提醒我。")
+    }
+    func testAttachmentTrayRaisesComposerAndVoiceKeyboardToggle() {
+        let app = launch()
+        let plus = app.buttons["添加照片和文件"]
+        XCTAssertTrue(plus.waitForExistence(timeout: 8)); let before = plus.frame.midY; plus.tap()
+        XCTAssertTrue(app.otherElements["attachment-tray"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["拍照"].exists); XCTAssertTrue(app.buttons["文件"].exists)
+        XCTAssertLessThan(app.buttons["收起附件面板"].frame.midY, before - 100)
+        app.buttons["收起附件面板"].tap()
+        app.buttons["按住语音输入"].tap()
+        XCTAssertTrue(app.buttons["切换到键盘输入"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["composer-text"].exists)
+        app.buttons["切换到键盘输入"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["composer-text"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+    func testCompactModelAndReasoningConfirmOriginalState() {
+        let app = XCUIApplication(); app.launchArguments = ["--network-fixture"]; app.launch()
+        XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
+        XCTAssertTrue(app.buttons["选择模型：模型 B"].waitForExistence(timeout: 5))
+        app.buttons["选择模型：模型 B"].tap()
+        XCTAssertTrue(app.staticTexts["0.65×"].exists)
+        app.buttons["选择推理等级：high"].tap()
+        XCTAssertTrue(app.staticTexts["电脑已确认模型设置。"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.otherElements["compact-model-picker"].exists)
+        let selector = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B"))
+        XCTAssertTrue(selector.firstMatch.exists)
+    }
+    func testModelRefusalDoesNotPretendChangeSucceeded() {
+        let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--controls-refusal-fixture"]; app.launch()
+        XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
+        app.buttons["选择模型：模型 B"].tap(); app.buttons["选择推理等级：high"].tap()
+        XCTAssertTrue(app.staticTexts["电脑尚未确认设置，手机没有应用这次切换，请重试。"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.otherElements["compact-model-picker"].exists)
+        XCTAssertFalse(app.staticTexts["电脑已确认模型设置。"].exists)
     }
     func testInlineSingleChoiceSendsImmediately() {
         let app = launch(["--show-questions"])

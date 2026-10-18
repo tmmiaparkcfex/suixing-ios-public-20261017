@@ -9,6 +9,8 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
     private static var sequence = 0
     private static var sentText: [String: String] = [:]
     private static var removed: [String: Set<String>] = [:]
+    private static var selectedModels: [String: String] = [:]
+    private static var selectedEfforts: [String: String] = [:]
     private static let performanceMessages: [[String: Any]] = (0..<100).map { index in
         let paragraph = "这是一段模拟的长对话记录，保留段落和重点，验证手机滑动和后台更新同时出现时的流畅度。"
         let text = "## 第 \(index + 1) 条任务记录\n\n**重点：这是性能验收用的合成内容。**\n\n" + String(repeating: paragraph + "\n\n", count: index == 0 ? 280 : 24) + "\n文件：reference-\(index).txt\n\n| 项目 | 状态 |\n|---|---|\n| 历史 | 完整保留 |\n| 进度 | 独立更新 |"
@@ -30,6 +32,11 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
         }
         let body = bodyData.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
         Self.lock.lock()
+        if route.hasSuffix("/controls"), !body.isEmpty, !ProcessInfo.processInfo.arguments.contains("--controls-refusal-fixture") {
+            if let value = body["modelId"] as? String { Self.selectedModels[engine] = value }
+            if let value = body["reasoningEffort"] as? String { Self.selectedEfforts[engine] = value }
+        }
+        let modelID = Self.selectedModels[engine] ?? engine + "-fixture-a", effort = Self.selectedEfforts[engine] ?? "low"
         if route.hasSuffix("history/open"), let id = body["id"] as? String { Self.selected[engine] = id }
         if route.hasSuffix("history/delete"), let target = body["id"] as? String {
             Self.removed[engine, default: []].insert(target)
@@ -42,6 +49,7 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
         Self.sequence += 1
         let sequence = Self.sequence
         Self.lock.unlock()
+        let controls: [String: Any] = ["modelId": modelID, "modelLabel": modelID.hasSuffix("-b") ? "模型 B" : "模型 A", "reasoningEffort": effort, "permissionId": "default", "permissionLabel": "工作区", "confirmed": !ProcessInfo.processInfo.arguments.contains("--controls-refusal-fixture"), "canChangeModel": true, "canChangeReasoning": true, "models": [["id": engine + "-fixture-a", "label": "模型 A", "billingLabel": "0.21×", "reasoningEfforts": ["low", "medium", "high"]], ["id": engine + "-fixture-b", "label": "模型 B", "billingLabel": "0.65×", "reasoningEfforts": ["low", "high"]]], "permissions": []]
         let suffix = id.hasSuffix("222222222222") || id.hasSuffix("session-b") ? "B" : "A"
         let label = PocketEngine.title(engine) + "-" + suffix
         var response: [String: Any] = ["ok": true]
@@ -49,7 +57,7 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
             response = ["threadId": id, "title": label + " 测试对话", "engine": engine, "cwd": "D:/codex/fixture", "connected": true, "historyReady": true, "csrf": "fixture-csrf", "busy": false, "approvals": [], "questions": [], "events": [],
                 "capabilities": ["newSession": true, "deleteSession": engine != "codex", "deleteMode": engine == "workbuddy" ? "delete" : "archive", "deleteDisabledReason": "Codex 归档请在电脑操作"],
                 "messages": [["role": "assistant", "itemId": id + "-message", "time": 1700000000000, "text": label + " 会话内容\n\n这是当前会话的真实加载结果标记。"]],
-                "usage": ["totalTokens": 100, "contextTokens": 20, "contextWindow": 1000]]
+                "controls": controls, "usage": ["totalTokens": 100, "contextTokens": 20, "contextWindow": 1000]]
             if let sentText { var messages = response["messages"] as! [[String: Any]]; messages.append(["role": "user", "itemId": id + "-phone-input", "time": 1700000001000, "text": sentText]); response["messages"] = messages }
         } else if route.hasSuffix("/history") {
             let ids = engine == "codex" ? ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"] : engine == "workbuddy" ? ["wb-session-a", "wb-session-b"] : ["session-a", "session-b"]
@@ -63,7 +71,7 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
         } else if route.hasSuffix("/account") {
             response = ["kind": engine == "codex" ? "window" : engine == "dsh" ? "money" : "credits", "label": engine == "codex" ? "五小时额度剩余" : engine == "dsh" ? "账户余额" : "剩余积分", "status": "available", "remaining": engine == "workbuddy" ? 1234.5 : 28.36, "remainingPercent": 74, "updatedAt": 1700000000000, "currency": "CNY", "source": "仅 DEBUG 模拟器测试"]
         } else if route.hasSuffix("/files") { response = ["files": []] }
-        else if route.hasSuffix("/controls") { response = ["models": [], "permissions": []] }
+        else if route.hasSuffix("/controls") { response = controls }
         if ProcessInfo.processInfo.arguments.contains("--performance-fixture") {
             if route.hasSuffix("/state") {
                 response["messages"] = Self.performanceMessages

@@ -33,6 +33,7 @@ struct NativeTranscriptView: UIViewControllerRepresentable {
 private struct TranscriptEntry {
     enum Content {
         case message(Message, [TaskFile])
+        case progressGroup([Message])
         case supplementary(AnyView)
     }
     let id: String
@@ -110,6 +111,11 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
             switch entry.content {
             case .message(let message, let files):
                 content = AnyView(MessageBubble(engine: self.snapshot?.engine ?? "codex", message: message, files: files))
+                cell.accessibilityIdentifier = "transcript-message-" + id
+            case .progressGroup(let messages):
+                content = AnyView(ProgressMessagesView(messages: messages, engine: self.snapshot?.engine ?? "codex", opening: { [weak self] in
+                    guard let self else { return }; self.following = false; self.requestedJump = false; self.anchor = self.captureAnchor(); self.publishFollowing()
+                }))
                 cell.accessibilityIdentifier = "transcript-message-" + id
             case .supplementary(let value):
                 content = value
@@ -207,6 +213,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
             revision.combine(message.time)
             revision.combine(message.phase)
             if let images = message.images { for image in images { revision.combine(image.id); revision.combine(image.width); revision.combine(image.height); revision.combine(image.inline); revision.combine(image.remoteURL) } }
+            if let files = message.documents { for file in files { revision.combine(file.id); revision.combine(file.name); revision.combine(file.size); revision.combine(file.kind) } }
             if let usage = message.usage {
                 revision.combine(usage.totalTokens); revision.combine(usage.inputTokens)
                 revision.combine(usage.outputTokens); revision.combine(usage.cachedInputTokens)
@@ -222,6 +229,20 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
             messageCache[id] = CachedTranscriptMessage(message: message, filesVersion: filesVersion, files: files, entry: entry)
         }
         if messageCache.count != retained.count { messageCache = messageCache.filter { retained.contains($0.key) } }
+        let original = entries
+        let outline = TranscriptOutline.make(original.map { entry in
+            if case .message(let message, let files) = entry.content { return TranscriptOutlineMessage(role: message.role, phase: message.phase, hasMedia: message.images?.isEmpty == false || message.documents?.isEmpty == false || !files.isEmpty) }
+            return TranscriptOutlineMessage(role: "other", phase: nil, hasMedia: false)
+        }, busy: input.model.conversation.busy)
+        entries = outline.map { item in
+            switch item {
+            case .message(let index): return original[index]
+            case .progress(let user, let indexes):
+                var revision = Hasher(); var messages: [Message] = []
+                for index in indexes { revision.combine(original[index].revision); if case .message(let message, _) = original[index].content { messages.append(message) } }
+                return TranscriptEntry(id: "progress:" + original[user].id, revision: revision.finalize(), content: .progressGroup(messages))
+            }
+        }
         if entries.isEmpty {
             entries.append(TranscriptEntry(id: "special:empty", revision: input.conversationKey.hashValue, content: .supplementary(input.emptyState)))
         }
