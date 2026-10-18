@@ -140,8 +140,9 @@ import Vision
         XCTAssertFalse(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].exists)
         input.tap(); input.typeText(" Please check first.")
         // The actual edit depends on the caret position chosen by the tap.
-        let edited = input.value as? String ?? ""
+        let edited = (input.value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertTrue(edited.contains("Please check first."))
+        XCTAssertTrue(edited.contains("帮我整理截图"))
         XCTAssertNotEqual(edited, "帮我整理截图，完成后提醒我。")
         XCTAssertFalse(app.tables["transcript-table"].staticTexts[edited].exists)
         app.buttons["发送指令"].tap()
