@@ -6,12 +6,12 @@ on:
         description: Verification scope
         type: choice
         default: full
-        options: [full, performance]
+        options: [full, performance, reader]
 permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-15-intel
+    runs-on: ${{ inputs.scope == 'reader' && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -104,6 +104,12 @@ jobs:
           DEVICE=$(cat .simulator-id)
           FILTER=()
           if [ "${{ inputs.scope }}" = "performance" ]; then FILTER=(-only-testing:SuixingUITests/SuixingUITests/testLargeConversationUsageRefreshDoesNotRebuildHistory); fi
+          if [ "${{ inputs.scope }}" = "reader" ]; then
+            FILTER=()
+            for TEST in testMarkdownStructure testTranscriptDesktopImageLoadsAndOpens testLongHistoryScrollAndJumpNeverBlanks testStreamingDoesNotMoveHistoryAnchor testNetworkEngineAndConversationSwitches testTypingDoesNotInvalidateLongTranscript testLargeConversationUsageRefreshDoesNotRebuildHistory; do
+              FILTER+=("-only-testing:SuixingUITests/SuixingUITests/$TEST")
+            done
+          fi
           xcodebuild -project Suixing.xcodeproj -scheme Suixing \
             -configuration Debug -sdk iphonesimulator -destination "id=$DEVICE" \
             -derivedDataPath simulator-build -resultBundlePath UI-Checks.xcresult \
