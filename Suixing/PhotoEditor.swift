@@ -11,7 +11,7 @@ import PhotosUI
     private var observing = false
     func open() async {
         #if DEBUG && targetEnvironment(simulator)
-        if ProcessInfo.processInfo.arguments.contains("--design-preview") { authorization = .denied; return }
+        if ProcessInfo.processInfo.arguments.contains("--design-preview") && !ProcessInfo.processInfo.arguments.contains("--photo-library-fixture") { authorization = .denied; return }
         #endif
         if authorization == .notDetermined { authorization = await PHPhotoLibrary.requestAuthorization(for: .readWrite) }
         guard authorization == .authorized || authorization == .limited else { return }
@@ -36,12 +36,15 @@ private struct RecentPhotoThumbnail: View {
     let selected: Bool
     let loading: Bool
     let select: () -> Void
+    let preview: () -> Void
     @State private var picture: UIImage?
     @State private var request: PHImageRequestID?
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Group { if let picture { Image(uiImage: picture).resizable().scaledToFill() } else { Color(.systemGray5).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } } }
-                .frame(width: 84, height: 104).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
+            Button(action: preview) {
+                Group { if let picture { Image(uiImage: picture).resizable().scaledToFill() } else { Color(.systemGray5).overlay { Image(systemName: "photo").foregroundStyle(.secondary) } } }
+                    .frame(width: 84, height: 104).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
+            }.buttonStyle(.plain).accessibilityLabel("放大预览相册照片")
             Button(action: select) {
                 ZStack {
                     Circle().fill(selected ? Color.blue : Color.black.opacity(0.32))
@@ -72,7 +75,7 @@ struct AttachmentTray: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 8) {
                             ForEach(library.assets, id: \.localIdentifier) { asset in
-                                RecentPhotoThumbnail(asset: asset, selected: model.pendingImages.contains { $0.assetIdentifier == asset.localIdentifier }, loading: library.loading.contains(asset.localIdentifier)) { toggle(asset) }
+                                RecentPhotoThumbnail(asset: asset, selected: model.pendingImages.contains { $0.assetIdentifier == asset.localIdentifier }, loading: library.loading.contains(asset.localIdentifier)) { toggle(asset) } preview: { preview(asset) }
                             }
                         }.padding(.horizontal, 14)
                     }.frame(height: 104)
@@ -92,6 +95,9 @@ struct AttachmentTray: View {
         VStack(spacing: 9) { Image(systemName: icon).font(.system(size: 24)); Text(title).font(.system(size: 14, weight: .medium)) }.frame(maxWidth: .infinity).frame(height: 82).foregroundStyle(Color.primary).background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
     private func trayButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View { Button(action: action) { trayLabel(title, icon: icon) }.buttonStyle(.plain) }
+    private func preview(_ asset: PHAsset) {
+        Task { if let bytes = await library.bytes(asset) { model.presentLibraryPhoto(bytes, assetIdentifier: asset.localIdentifier) } else { model.notice = "照片暂时无法读取，请稍后重试。" } }
+    }
     private func toggle(_ asset: PHAsset) {
         let id = asset.localIdentifier
         if model.pendingImages.contains(where: { $0.assetIdentifier == id }) { model.pendingImages.removeAll { $0.assetIdentifier == id }; return }

@@ -72,6 +72,8 @@ jobs:
           xcrun simctl install "$DEVICE" simulator-build/Build/Products/Debug-iphonesimulator/Suixing.app
           xcrun simctl status_bar "$DEVICE" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
           xcrun simctl ui "$DEVICE" appearance light
+          xcrun simctl addmedia "$DEVICE" Suixing/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          xcrun simctl privacy "$DEVICE" grant photos local.suixing.pocket.zhang
           mkdir -p screenshots
           xcrun simctl launch "$DEVICE" local.suixing.pocket.zhang --design-preview --run-checks
           sleep 2
@@ -85,7 +87,7 @@ jobs:
             xcrun simctl io "$DEVICE" screenshot "screenshots/$ENGINE-iPhone13Pro-preview.png"
             xcrun simctl terminate "$DEVICE" local.suixing.pocket.zhang
           done
-          for PANEL in token-expanded show-market show-formatting show-reading show-images show-media show-attachments show-voice-input show-model-picker show-editor show-notifications show-questions show-sidebar show-updates show-recording; do
+          for PANEL in token-expanded show-market show-names show-formatting show-reading show-images show-media show-attachments show-voice-input show-model-picker show-editor show-notifications show-questions show-sidebar show-updates show-recording; do
             xcrun simctl launch "$DEVICE" local.suixing.pocket.zhang --design-preview --reset-overlay-position --engine codex "--$PANEL"
             sleep 3
             xcrun simctl io "$DEVICE" screenshot "screenshots/codex-$PANEL-iPhone13Pro-preview.png"

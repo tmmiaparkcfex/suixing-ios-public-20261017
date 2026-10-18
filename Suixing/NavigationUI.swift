@@ -26,6 +26,7 @@ struct CompactModelPicker: View {
             HStack(alignment: .top, spacing: 8) {
                 VStack(spacing: 0) {
                     HStack { Text("模型").font(.system(size: 13, weight: .semibold)); Spacer(); if model.controlsLoading { ProgressView().controlSize(.small) }; Button(action: close) { Image(systemName: "xmark").font(.system(size: 12)) }.accessibilityLabel("关闭模型选择") }.padding(12)
+                    if let status = model.controlsStatus { Text(status).font(.system(size: 10, weight: .medium)).foregroundStyle(model.controlsLoading ? Color.secondary : navigationBlue).padding(.horizontal, 9).padding(.bottom, 6).accessibilityIdentifier("model-confirmation-status") }
                     Divider()
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: true) {
@@ -33,7 +34,10 @@ struct CompactModelPicker: View {
                                 ForEach(options) { option in
                                     Button {
                                         selectedID = option.id
-                                        if option.reasoningEfforts?.isEmpty != false { apply(option, effort: nil) }
+                                        let levels = option.reasoningEfforts ?? []
+                                        let current = model.conversation.controls?.reasoningEffort
+                                        let effort = levels.contains(current ?? "") ? current : (option.defaultReasoningEffort.flatMap { levels.contains($0) ? $0 : nil } ?? levels.first)
+                                        apply(option, effort: effort, finish: false)
                                     } label: {
                                         HStack(spacing: 5) {
                                             VStack(alignment: .leading, spacing: 3) { Text(option.label).font(.system(size: 12, weight: option.id == selected?.id ? .semibold : .regular)).lineLimit(2); if let price = option.billingLabel { Text(price).font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary) } }
@@ -41,7 +45,7 @@ struct CompactModelPicker: View {
                                             if option.id == model.conversation.controls?.modelId { Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(.green) }
                                             if option.reasoningEfforts?.isEmpty == false { Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(.secondary) }
                                         }.frame(maxWidth: .infinity, minHeight: 35, alignment: .leading).padding(.horizontal, 9).padding(.vertical, 4).background(option.id == selected?.id ? Color.blue.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 8)).contentShape(Rectangle())
-                                    }.buttonStyle(.plain).disabled(model.working || model.controlsLoading || model.conversation.controls?.canChangeModel != true).id(option.id).accessibilityLabel("选择模型：" + option.label)
+                                    }.buttonStyle(.plain).disabled(model.working || model.controlsLoading || model.conversation.controls?.canChangeModel != true || option.disabled == true).id(option.id).accessibilityLabel("选择模型：" + option.label)
                                         .background { GeometryReader { row in Color.clear.preference(key: ModelRowPositionKey.self, value: [option.id: row.frame(in: .named("model-options")).minY + 44]) } }
                                 }
                             }.padding(5)
@@ -56,7 +60,7 @@ struct CompactModelPicker: View {
                         VStack(spacing: 2) {
                             ForEach(levels, id: \.self) { level in
                                 Button { if let selected { apply(selected, effort: level) } } label: {
-                                    HStack(spacing: 3) { VStack(alignment: .leading, spacing: 2) { Text(effortLabel(level)).font(.system(size: 12)); if let rate = selected?.reasoningOptions?.first(where: { $0.id == level })?.billingLabel { Text(rate).font(.system(size: 9)).foregroundStyle(.secondary) } }; Spacer(minLength: 0); if selected?.id == model.conversation.controls?.modelId && level == model.conversation.controls?.reasoningEffort { Image(systemName: "checkmark").font(.system(size: 9)).foregroundStyle(.green) } }.frame(maxWidth: .infinity, minHeight: 31).padding(.horizontal, 8).contentShape(Rectangle())
+                                    HStack(spacing: 3) { VStack(alignment: .leading, spacing: 2) { Text(selected?.reasoningOptions?.first(where: { $0.id == level })?.label ?? effortLabel(level)).font(.system(size: 12)); if let rate = selected?.reasoningOptions?.first(where: { $0.id == level })?.billingLabel { Text(rate).font(.system(size: 9)).foregroundStyle(.secondary) } }; Spacer(minLength: 0); if selected?.id == model.conversation.controls?.modelId && level == model.conversation.controls?.reasoningEffort { Image(systemName: "checkmark").font(.system(size: 9)).foregroundStyle(.green) } }.frame(maxWidth: .infinity, minHeight: 31).padding(.horizontal, 8).contentShape(Rectangle())
                                 }.buttonStyle(.plain).disabled(model.working || model.controlsLoading).accessibilityLabel("选择推理等级：" + level)
                             }
                         }.padding(.vertical, 4)
@@ -67,11 +71,12 @@ struct CompactModelPicker: View {
         }.shadow(color: .black.opacity(0.13), radius: 14, y: 5).onPreferenceChange(ModelRowPositionKey.self) { rowPositions = $0 }.onAppear { selectedID = model.conversation.controls?.modelId }.accessibilityIdentifier("compact-model-picker")
     }
     private func effortLabel(_ value: String) -> String { ["off": "关闭", "none": "关闭", "low": "低", "medium": "中", "high": "高", "xhigh": "超高", "max": "最大", "ultra": "极高"][value] ?? value }
-    private func apply(_ option: EngineModelOption, effort: String?) {
+    private func apply(_ option: EngineModelOption, effort: String?, finish: Bool = true) {
         var patch = ["modelId": option.id]; if let effort { patch["reasoningEffort"] = effort }
         Task {
-            await model.updateControls(patch)
-            if model.notice == "电脑已确认模型设置。", model.conversation.controls?.modelId == option.id, effort == nil || model.conversation.controls?.reasoningEffort == effort { close() }
+            let confirmed = await model.updateControls(patch, announce: false)
+            selectedID = model.conversation.controls?.modelId
+            if confirmed && finish { close() }
         }
     }
 }
@@ -193,14 +198,19 @@ struct InlineQuestionCard: View {
     @State private var editingText = false
     @State private var expandedQuestion = false
     @State private var submitted = false
+    @State private var closed = false
     @State private var submitting = false
     @FocusState private var answerFocused: Bool
     private var instantChoice: Bool { request.questions.count == 1 && request.questions.first?.multiSelect != true }
     var body: some View {
+        if closed {
+            Button { closed = false } label: { Label("问题已收起 · 点击继续回答", systemImage: "questionmark.circle").font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(12) }.accessibilityLabel("展开待回答问题")
+        } else {
         VStack(alignment: .leading, spacing: compact ? 8 : 16) {
             HStack {
                 Label("问题", systemImage: "questionmark.circle").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                 Spacer()
+                if !submitted { Button { answerFocused = false; closed = true } label: { Image(systemName: "xmark").font(.system(size: 11)).frame(width: 26, height: 24) }.disabled(submitting).accessibilityLabel("关闭问题卡片") }
                 if submitted { Label("已提交", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green) }
                 else if submitting { ProgressView().controlSize(.small) }
                 else if compact { Button { withAnimation(.easeOut(duration: 0.15)) { expandedQuestion.toggle() } } label: { Image(systemName: expandedQuestion ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .medium)).frame(width: 28, height: 22) }.foregroundStyle(.secondary).accessibilityLabel(expandedQuestion ? "收起完整问题" : "展开完整问题") }
@@ -238,10 +248,12 @@ struct InlineQuestionCard: View {
                 HStack {
                     if request.questions.contains(where: { $0.allowFreeText != false }) { Button { editingText.toggle(); if !editingText { answerFocused = false } } label: { Label(editingText ? "收起文字回复" : "自行撰写回复", systemImage: "pencil").font(.system(size: 11)) }.foregroundStyle(.secondary) }
                     Spacer()
+                    Button("跳过") { guard !submitting else { return }; answerFocused = false; submitting = true; Task { submitted = await model.skipQuestion(request.id); submitting = false } }.font(.system(size: 12)).disabled(model.working || submitting || request.supported == false).accessibilityLabel("跳过当前问题")
                     if !instantChoice || editingText || request.questions.allSatisfy({ ($0.options ?? []).isEmpty }) { Button("发送回答") { send(answers) }.font(.system(size: 12, weight: .semibold)).buttonStyle(.borderedProminent).tint(navigationBlue).disabled(!canSubmit || model.working || submitting) }
                 }
             }
         }.padding(compact ? 12 : 16).background(.white, in: RoundedRectangle(cornerRadius: compact ? 15 : 18)).overlay { RoundedRectangle(cornerRadius: compact ? 15 : 18).stroke(Color.black.opacity(0.09), lineWidth: 1) }
+    }
     }
     private func send(_ values: [String: [String]]) {
         guard !submitting, !submitted else { return }; answerFocused = false; submitting = true

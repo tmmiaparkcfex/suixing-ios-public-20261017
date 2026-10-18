@@ -195,6 +195,9 @@ struct EngineModelOption: Decodable, Identifiable {
     let id: String
     let label: String
     var reasoningEfforts: [String]?
+    var defaultReasoningEffort: String?
+    var disabled: Bool?
+    var disabledReason: String?
     var billingLabel: String?
     var reasoningOptions: [EngineReasoningOption]?
 }
@@ -221,6 +224,8 @@ struct EngineControls: Decodable {
     var canChangeReasoning: Bool?
     var disabledReason: String?
     var confirmed: Bool?
+    var threadId: String?
+    var desktopUIConfirmed: Bool?
 }
 
 struct QuestionRequest: Decodable, Identifiable {
@@ -387,6 +392,8 @@ struct HistoryItem: Decodable, Identifiable {
 struct FileList: Decodable { let files: [TaskFile] }
 struct HistoryList: Decodable { let items: [HistoryItem] }
 struct DSHLaunch: Decodable { let url: String }
+struct PhotoPreview: Identifiable { let id = UUID(); let url: URL; var assetIdentifier: String? = nil; var data: Data? = nil }
+
 struct PreviewFile: Identifiable { let id = UUID(); let url: URL }
 
 enum PocketError: LocalizedError {

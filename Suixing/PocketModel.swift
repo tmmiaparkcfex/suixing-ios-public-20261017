@@ -62,9 +62,14 @@ private enum Vault {
     var draft: String { get { composerDraft.text } set { composerDraft.text = newValue } }
     var lastDraftEditAt = Date.distantPast
     @Published var preview: PreviewFile?
+    @Published var photoPreview: PhotoPreview?
     @Published var playback: MediaPlayback?
     @Published var fileLoading = false
     @Published var controlsLoading = false
+    @Published var controlsStatus: String?
+    @Published var sendingMessage = false
+    private var unconfirmedControls = Set<String>()
+    private var controlsKey: String { engine + ":" + (conversation.threadId ?? "") }
     @Published var pendingImages: [PendingImage] = []
     @Published var pendingDocuments: [PendingDocument] = []
     @Published var uploadStatus: String?
@@ -162,6 +167,10 @@ private enum Vault {
             }
             if ProcessInfo.processInfo.arguments.contains("--show-formatting") {
                 conversation.messages = [Message(role: "assistant", text: "## 准备已就绪\n\n**结论：现在可以开始操作。**\n\n| 功能 | 当前状态 |\n|---|---|\n| 图片 | 支持**裁剪、旋转和标注** |\n| 用量 | 点击底栏查看**实时曲线** |\n| 任务 | 手机退出后，电脑继续执行 |\n\n### 下一步\n\n1. 打开要继续的电脑会话。\n2. 发送截图，圈出需要修改的地方。\n\n> 注意：关机或休眠会中断任务。\n\n```text\n工作目录：D:\\codex\n```", time: now - 60000)]
+                conversation.busy = false; conversation.events = []
+            }
+            if ProcessInfo.processInfo.arguments.contains("--show-names") {
+                conversation.messages = [Message(role: "assistant", text: "## 文件与目录，看得更清楚\n\n主说明是 `README.md`，参数文件是 `settings/*.yaml`，效果图放在 `examples/`。\n\n**重点：文件名、目录和正文各有清晰样式。**\n\n### 三项工具\n\n`caption-builder`（字幕生成） · `audio-mixer`（声音混合） · `video-export`（视频导出）\n\n### 处理流程\n\n准备素材 → 编排镜头 → 加入字幕 → 导出视频", time: now, itemId: "synthetic-names", phase: "final_answer")]
                 conversation.busy = false; conversation.events = []
             }
             if ProcessInfo.processInfo.arguments.contains("--show-images") {
@@ -279,28 +288,34 @@ private enum Vault {
         controlsLoading = true; defer { controlsLoading = false }
         do {
             let result = try await read("api/controls", as: EngineControls.self)
-            if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result }
+            if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result; if result.confirmed == true { unconfirmedControls.remove(controlsKey); controlsStatus = "电脑设置已同步" } }
         } catch { handle(error) }
     }
-    func updateControls(_ patch: [String: String]) async {
-        guard !working, !controlsLoading, !designPreview else { return }
-        notice = nil
+    @discardableResult func updateControls(_ patch: [String: String], announce: Bool = true) async -> Bool {
+        guard !working, !controlsLoading, !designPreview else { return false }
+        notice = nil; controlsStatus = "正在同步电脑设置…"
         controlsLoading = true; working = true
         defer { controlsLoading = false; working = false }
-        let expectedEngine = engine, expectedThread = conversation.threadId
+        let expectedEngine = engine, expectedThread = conversation.threadId, key = controlsKey
+        unconfirmedControls.insert(key)
         do {
-            let result = try JSONDecoder().decode(EngineControls.self, from: await data("api/controls", body: patch))
-            guard patch.allSatisfy({ key, value in key == "modelId" ? result.modelId == value : key == "reasoningEffort" ? result.reasoningEffort == value : result.permissionId == value }), result.confirmed != false else { throw PocketError.message("电脑尚未确认设置，手机没有应用这次切换，请重试。") }
-            if engine == expectedEngine && conversation.threadId == expectedThread { conversation.controls = result; notice = "电脑已确认模型设置。" }
+            var body = patch; body["expectedThreadId"] = expectedThread
+            let result = try JSONDecoder().decode(EngineControls.self, from: await data("api/controls", body: body))
+            guard patch.allSatisfy({ key, value in key == "modelId" ? result.modelId == value : key == "reasoningEffort" ? result.reasoningEffort == value : result.permissionId == value }), result.confirmed == true, result.threadId == nil || result.threadId == expectedThread else { throw PocketError.message("电脑尚未确认设置，请重新同步后再发送。") }
+            guard engine == expectedEngine && conversation.threadId == expectedThread else { throw PocketError.message("会话已切换，请重新同步设置。") }
+            conversation.controls = result; unconfirmedControls.remove(key); controlsStatus = "✓ 电脑已确认"
+            if announce { notice = "电脑已确认模型设置。" }
             if engine == "dsh", patch["modelId"] != nil { invalidateAccountBudget() }
             await refresh()
-        } catch { handle(error) }
+            return true
+        } catch { controlsStatus = "设置未确认，请重新同步"; handle(error); return false }
     }
     func selectModel(_ option: EngineModelOption) async {
         var patch = ["modelId": option.id]
         let efforts = option.reasoningEfforts ?? []
         if let current = conversation.controls?.reasoningEffort, efforts.contains(current) { patch["reasoningEffort"] = current }
-        else if let next = efforts.first(where: { $0 == "medium" }) ?? efforts.first { patch["reasoningEffort"] = next }
+        else if let next = option.defaultReasoningEffort, efforts.contains(next) { patch["reasoningEffort"] = next }
+        else if let next = efforts.first { patch["reasoningEffort"] = next }
         await updateControls(patch)
     }
     var canCreateSession: Bool { conversation.capabilities?.newSession ?? (engine == "dsh") }
@@ -519,10 +534,12 @@ private enum Vault {
         }
         catch { handle(error) }
     }
+    var hasSendableDraft: Bool { !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty }
     func send() async {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty), !conversation.busy, !working else { return }
-        working = true; defer { working = false }
+        guard (!text.isEmpty || !pendingImages.isEmpty || !pendingDocuments.isEmpty), !working, !sendingMessage else { return }
+        guard !unconfirmedControls.contains(controlsKey) else { notice = "模型设置尚未得到电脑确认，请打开模型菜单重新同步后再发送。"; return }
+        sendingMessage = true; working = true; defer { working = false; sendingMessage = false }
         defer { uploadStatus = nil }
         do {
             var ids: [String] = []
@@ -601,6 +618,13 @@ private enum Vault {
         let result = try JSONDecoder().decode(VoiceTranscript.self, from: await data("api/speech", body: ["base64": bytes.base64EncodedString(), "mimeType": "audio/wav", "name": "speech.wav", "duration": duration, "language": "zh"]))
         guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw PocketError.message("未识别到文字，请靠近麦克风再试。") }
         return result
+    }
+    @discardableResult func skipQuestion(_ id: String) async -> Bool {
+        guard !working else { return false }
+        if designPreview { conversation.questions?.removeAll { $0.id == id }; return true }
+        working = true; defer { working = false }; answeringQuestionId = id; defer { answeringQuestionId = nil }
+        do { _ = try await data("api/question/skip", body: ["id": id]); selectionRevision += 1; lastStateRefresh = .distantPast; await refresh(force: true); return true }
+        catch { handle(error); return false }
     }
     @discardableResult func answerQuestion(_ id: String, answers: [String: [String]]) async -> Bool {
         guard !working else { return false }
@@ -819,8 +843,22 @@ private enum Vault {
             else { ext = ".webp" }
             let url = folder.appendingPathComponent(image.id + ext)
             try bytes.write(to: url, options: .atomic)
-            preview = PreviewFile(url: url)
+            photoPreview = PhotoPreview(url: url)
         } catch { handle(error) }
+    }
+    func presentLibraryPhoto(_ data: Data, assetIdentifier: String) {
+        do {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("相册预览", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent(UUID().uuidString + ".jpg")
+            try data.write(to: url, options: .atomic)
+            photoPreview = PhotoPreview(url: url, assetIdentifier: assetIdentifier, data: data)
+        } catch { handle(error) }
+    }
+    func useLibraryPhoto(_ data: Data, assetIdentifier: String, edited: Bool) {
+        if let existing = pendingImages.first(where: { $0.assetIdentifier == assetIdentifier }) {
+            if edited { replaceImage(existing.id, with: data) }
+        } else { addImage(data, assetIdentifier: assetIdentifier) }
     }
     func logout() async {
         _ = try? await data("api/logout", body: [:])

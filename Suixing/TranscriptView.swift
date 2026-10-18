@@ -14,6 +14,7 @@ struct NativeTranscriptView: UIViewControllerRepresentable {
     var progressRevision = ""
     let emptyState: AnyView
     let onFollowingLatest: (Bool) -> Void
+    var onUserScroll: () -> Void = {}
 
     func makeUIViewController(context: Context) -> TranscriptController {
         let controller = TranscriptController()
@@ -82,6 +83,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
     private var requestedJump = false
     private var following = true
     private var onFollowingLatest: ((Bool) -> Void)?
+    private var onUserScroll: (() -> Void)?
     private var lastPublishedFollowing: Bool?
     private var anchor: TranscriptAnchor?
     private var heightCache: [String: CGFloat] = [:]
@@ -147,6 +149,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
         loadViewIfNeeded()
         receivedInputs += 1
         onFollowingLatest = input.onFollowingLatest
+        onUserScroll = input.onUserScroll
         let changedConversation = snapshot?.key != input.conversationKey
         let wantsJump = jumpToken != nil && jumpToken != input.jumpToken
         jumpToken = input.jumpToken
@@ -369,6 +372,7 @@ final class TranscriptController: UIViewController, UITableViewDelegate {
         requestedJump = false
         anchor = captureAnchor()
         publishFollowing()
+        onUserScroll?()
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {

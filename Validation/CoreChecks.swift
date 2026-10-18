@@ -3,6 +3,17 @@ import CoreGraphics
 
 @main struct CoreChecks {
     static func main() {
+        precondition(TechnicalName.label("README.md") == "文件")
+        precondition(TechnicalName.label("settings/*.yaml") == "文件规则")
+        precondition(TechnicalName.label("examples/") == "目录")
+        precondition(TechnicalName.label("https://example.com/file.md") == nil)
+        precondition(TechnicalName.label("plain") == nil)
+        let names = ContentParser.parse("`caption-builder`（字幕生成） · `audio-mixer`（声音混合） · `video-export`（视频导出）")
+        precondition(names == [.terms([NamedTerm(name: "caption-builder", explanation: "字幕生成"), NamedTerm(name: "audio-mixer", explanation: "声音混合"), NamedTerm(name: "video-export", explanation: "视频导出")])])
+        precondition(ContentParser.parse("准备素材 → 编排镜头 → 加入字幕 → 导出视频") == [.sequence(["准备素材", "编排镜头", "加入字幕", "导出视频"])])
+        precondition(ContentParser.parse("普通词语 · 更多词语 · 仍是正文") == [.paragraph("普通词语 · 更多词语 · 仍是正文")])
+        precondition(ContentParser.parse("`a → b → c → d`") == [.paragraph("`a → b → c → d`")])
+        precondition(ContentParser.parse("`a` · 不完整 · `c`") == [.paragraph("`a` · 不完整 · `c`")])
         let link = NotificationDestination.parse(URL(string: "suixing://chat?engine=dsh&id=session_123")!)
         precondition(link?.engine == "dsh" && link?.threadId == "session_123")
         precondition(NotificationDestination.parse(URL(string: "suixing://chat?engine=workbuddy&id=wb-session-123")!)?.engine == "workbuddy")

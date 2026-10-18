@@ -15,6 +15,11 @@ struct NotificationDestination {
     }
 }
 
+struct NamedTerm: Equatable {
+    let name: String
+    let explanation: String
+}
+
 enum ContentBlock: Equatable {
     case paragraph(String)
     case heading(Int, String)
@@ -26,6 +31,22 @@ enum ContentBlock: Equatable {
     case image(String, String)
     case attachment(String, String)
     case callout(String, String)
+    case terms([NamedTerm])
+    case sequence([String])
+}
+
+enum TechnicalName {
+    private static let file = try! NSRegularExpression(pattern: #"\.(?:md|markdown|ya?ml|json|toml|ini|cfg|txt|csv|tsv|py|js|mjs|cjs|tsx?|jsx|swift|html|css|sh|ps1|cmd|bat|sql|xml|pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|mp4|mov|wav|mp3)(?::\d+(?::\d+)?)?$"#, options: .caseInsensitive)
+    static func label(_ raw: String) -> String? {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 180, !value.contains("\n"), !value.contains("://") else { return nil }
+        if (value.hasSuffix("/") || value.hasSuffix("\\")) && !value.contains(" ") { return "目录" }
+        if file.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)) != nil {
+            return value.contains("*") || value.contains("?") ? "文件规则" : "文件"
+        }
+        if !value.contains(" "), value.contains("/") || value.contains("\\") { return "路径" }
+        return nil
+    }
 }
 
 enum ContentParser {
@@ -65,7 +86,9 @@ enum ContentParser {
             guard !paragraph.isEmpty else { return }
             let text = paragraph.joined(separator: "\n")
             let labels = ["注意：", "提醒：", "重要：", "结论：", "提示：", "警告："]
-            if let label = labels.first(where: { text.hasPrefix($0) }) {
+            if let terms = namedTerms(text) { result.append(.terms(terms)) }
+            else if let steps = sequenceSteps(text) { result.append(.sequence(steps)) }
+            else if let label = labels.first(where: { text.hasPrefix($0) }) {
                 result.append(.callout(String(label.dropLast()), String(text.dropFirst(label.count)).trimmingCharacters(in: .whitespacesAndNewlines)))
             } else { result.append(.paragraph(text)) }
             paragraph = []
@@ -115,6 +138,35 @@ enum ContentParser {
             paragraph.append(raw); index += 1
         }
         flush(); return result
+    }
+    private static func splitOutsideCode(_ text: String, on separator: Character) -> [String]? {
+        guard !text.contains("\n\n"), !text.contains("``") else { return nil }
+        var pieces: [String] = [], current = "", inCode = false
+        for character in text {
+            if character == "`" { inCode.toggle() }
+            if character == separator && !inCode { pieces.append(current.trimmingCharacters(in: .whitespacesAndNewlines)); current = "" }
+            else { current.append(character) }
+        }
+        guard !inCode else { return nil }
+        pieces.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+        return pieces
+    }
+    private static func namedTerms(_ text: String) -> [NamedTerm]? {
+        guard text.contains("·"), let pieces = splitOutsideCode(text, on: "·"), (3...40).contains(pieces.count) else { return nil }
+        var terms: [NamedTerm] = []
+        for piece in pieces {
+            guard piece.first == "`", let end = piece.dropFirst().firstIndex(of: "`") else { return nil }
+            let name = String(piece[piece.index(after: piece.startIndex)..<end])
+            guard !name.isEmpty, name.count < 180, !name.contains("\n") else { return nil }
+            var explanation = String(piece[piece.index(after: end)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if (explanation.hasPrefix("（") && explanation.hasSuffix("）")) || (explanation.hasPrefix("(") && explanation.hasSuffix(")")) { explanation = String(explanation.dropFirst().dropLast()) }
+            terms.append(NamedTerm(name: name, explanation: explanation))
+        }
+        return terms
+    }
+    private static func sequenceSteps(_ text: String) -> [String]? {
+        guard text.contains("→"), text.count < 2000, let pieces = splitOutsideCode(text, on: "→"), (4...20).contains(pieces.count), pieces.allSatisfy({ !$0.isEmpty && $0.count < 240 }) else { return nil }
+        return pieces
     }
     private static func imageLine(_ line: String) -> (String, String)? {
         guard line.hasPrefix("!["), line.hasSuffix(")"), let separator = line.range(of: "](") else { return nil }

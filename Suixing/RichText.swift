@@ -32,10 +32,23 @@ private enum InlineEmphasis {
     static func styled(_ value: String) -> AttributedString {
         let key = value as NSString
         if let cached = cache.object(forKey: key) { return cached.value }
-        var result = (try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value)
-        for run in result.runs {
-            if run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true { result[run.range].foregroundColor = Color(red: 0.18, green: 0.36, blue: 0.77) }
-            if run.inlinePresentationIntent?.contains(.code) == true { result[run.range].font = .system(size: 13, design: .monospaced); result[run.range].backgroundColor = Color.blue.opacity(0.07) }
+        let parsed = (try? AttributedString(markdown: value, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(value)
+        var result = AttributedString()
+        for run in parsed.runs {
+            var segment = AttributedString(parsed[run.range])
+            if run.inlinePresentationIntent?.contains(.stronglyEmphasized) == true { segment.foregroundColor = Color(red: 0.18, green: 0.36, blue: 0.77) }
+            if run.inlinePresentationIntent?.contains(.code) == true {
+                let literal = String(segment.characters)
+                let ink = Color(red: 0.43, green: 0.18, blue: 0.02), paper = Color(red: 1, green: 0.94, blue: 0.79)
+                if let label = TechnicalName.label(literal) {
+                    var prefix = AttributedString("〔" + label + "〕")
+                    prefix.font = .system(size: 12, weight: .bold); prefix.foregroundColor = ink; prefix.backgroundColor = paper
+                    result += prefix
+                }
+                segment.font = .system(size: 16, weight: .semibold, design: .monospaced)
+                segment.foregroundColor = ink; segment.backgroundColor = paper
+            }
+            result += segment
         }
         cache.setObject(StyledInline(result), forKey: key, cost: value.utf8.count * 8 + 128)
         return result
@@ -51,6 +64,8 @@ enum MessageRenderPreparation {
                 switch block {
                 case .paragraph(let text), .heading(_, let text), .listItem(_, let text, _), .quote(let text), .callout(_, let text): _ = InlineEmphasis.styled(text)
                 case .table(let rows): for row in rows { for text in row { _ = InlineEmphasis.styled(text) } }
+                case .terms(let terms): for term in terms { _ = InlineEmphasis.styled(term.explanation) }
+                case .sequence(let steps): for step in steps { _ = InlineEmphasis.styled(step) }
                 case .code, .divider, .image, .attachment: break
                 }
             }
@@ -83,6 +98,8 @@ struct RichMessageText: View, Equatable {
             HStack(alignment: .top, spacing: 11) { RoundedRectangle(cornerRadius: 2).fill(Color.blue.opacity(0.45)).frame(width: 3); inline(text).font(.system(size: 15)).lineSpacing(5).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading) }.fixedSize(horizontal: false, vertical: true).padding(12).background(Color.blue.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
         case .code(let language, let code): CodeBlockView(language: language, code: code)
         case .table(let rows): MarkdownTableView(rows: rows)
+        case .terms(let terms): NamedTermsView(terms: terms)
+        case .sequence(let steps): SequenceStepsView(steps: steps)
         case .divider: Rectangle().fill(Color.primary.opacity(0.10)).frame(height: 1).padding(.vertical, 4)
         case .image(let caption, let id):
             if let image = images.first(where: { $0.id == id }) { ConversationImageView(image: image, engine: engine) }
@@ -99,6 +116,37 @@ struct RichMessageText: View, Equatable {
     }
     private func inline(_ value: String) -> Text {
         Text(InlineEmphasis.styled(value))
+    }
+}
+
+private struct NamedTermsView: View {
+    let terms: [NamedTerm]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(terms.enumerated()), id: \.offset) { index, term in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("\(index + 1).").font(.system(size: 15, weight: .semibold)).foregroundStyle(.blue).frame(width: 24, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !term.explanation.isEmpty { Text(InlineEmphasis.styled(term.explanation)).font(.system(size: 17, weight: .medium)).lineSpacing(5) }
+                        Text(term.name).font(.system(size: 16, weight: .semibold, design: .monospaced)).foregroundStyle(Color(red: 0.12, green: 0.29, blue: 0.66)).lineSpacing(4)
+                    }.frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.accessibilityIdentifier("readable-name-list")
+    }
+}
+
+private struct SequenceStepsView: View {
+    let steps: [String]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .top, spacing: 10) {
+                    Text("\(index + 1)").font(.system(size: 12, weight: .bold)).foregroundStyle(.white).frame(width: 23, height: 23).background(Color.blue, in: Circle())
+                    Text(InlineEmphasis.styled(step)).font(.system(size: 17)).lineSpacing(6).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }.accessibilityIdentifier("readable-workflow")
     }
 }
 
@@ -166,9 +214,12 @@ struct ConversationImageView: View {
     @State private var retry = 0
     private var key: String { model.server + ":" + engine + ":" + image.id }
     private var ratio: CGFloat {
-        if let w = image.width, let h = image.height, w > 0, h > 0 { return min(2.2, max(0.65, w / h)) }
-        return 1.35
+        if let picture = thumbnail, picture.size.height > 0 { return picture.size.width / picture.size.height }
+        if let w = image.width, let h = image.height, w > 0, h > 0 { return w / h }
+        return 0.6
     }
+    private var thumbnailWidth: CGFloat { max(76, min(260, 230 * ratio)) }
+    private var thumbnailHeight: CGFloat { min(230, thumbnailWidth / max(0.03, ratio)) }
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Button {
@@ -176,13 +227,12 @@ struct ConversationImageView: View {
                 else if failure != nil { failure = nil; retry += 1 }
             } label: {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12).fill(Color(.secondarySystemBackground))
+                    RoundedRectangle(cornerRadius: 12).fill(thumbnail == nil ? Color(.secondarySystemBackground) : .clear)
                     if let thumbnail { Image(uiImage: thumbnail).resizable().scaledToFit().padding(1) }
                     else if let failure { VStack(spacing: 9) { Image(systemName: "photo.badge.exclamationmark").font(.title2); Text(failure).font(.caption).multilineTextAlignment(.center); Text("点此重试").font(.caption.bold()) }.foregroundStyle(.secondary).padding(16) }
                     else { ProgressView("正在读取图片…").font(.caption) }
-                }.aspectRatio(ratio, contentMode: .fit).clipShape(RoundedRectangle(cornerRadius: 12)).overlay { RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 1) }
+                }.frame(width: thumbnailWidth, height: thumbnailHeight).clipShape(RoundedRectangle(cornerRadius: 12))
             }.buttonStyle(.plain).accessibilityIdentifier("conversation-image-" + image.id).accessibilityLabel(thumbnail == nil ? "加载对话图片" : "查看图片：" + image.name)
-            HStack { Image(systemName: "photo"); Text(image.name).lineLimit(1); Spacer(); if thumbnail != nil { Text("点开大图") } }.font(.system(size: 11)).foregroundStyle(.secondary)
         }
         .task(id: key + ":" + String(retry)) {
             thumbnail = nil; failure = nil
@@ -273,3 +323,96 @@ struct MediaPlaybackSheet: View {
     }
 }
 #endif
+
+struct FullscreenPhotoView: View {
+    @EnvironmentObject private var model: PocketModel
+    @Environment(\.dismiss) private var dismiss
+    let photo: PhotoPreview
+    @State private var editing = false
+    @State private var finishAfterEditing = false
+    private var selected: Bool { model.pendingImages.contains { $0.assetIdentifier == photo.assetIdentifier } }
+    private var atLimit: Bool { !selected && model.pendingImages.count + model.pendingDocuments.count >= 5 }
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ZoomablePhoto(url: photo.url, close: { dismiss() }).ignoresSafeArea()
+            if let asset = photo.assetIdentifier, let data = photo.data {
+                HStack(spacing: 20) {
+                    Button { editing = true } label: { Label("编辑图片", systemImage: "slider.horizontal.3").padding(.vertical, 12).frame(maxWidth: .infinity) }
+                    Button {
+                        model.useLibraryPhoto(data, assetIdentifier: asset, edited: false)
+                        dismiss()
+                    } label: { Text(atLimit ? "已达附件上限" : selected ? "已选中，返回" : "使用此图").fontWeight(.semibold).padding(.vertical, 12).frame(maxWidth: .infinity).background(Color.blue, in: Capsule()) }.disabled(atLimit)
+                }.font(.system(size: 16)).foregroundStyle(.white).padding(.horizontal, 24).padding(.bottom, 20).padding(.top, 10).background(Color.black.opacity(0.85))
+            }
+        }.background(Color.black).statusBarHidden(true)
+            .sheet(isPresented: $editing, onDismiss: { if finishAfterEditing { dismiss() } }) {
+                ImageEditorView(imageData: photo.data ?? Data()) { output in
+                    if let output, let asset = photo.assetIdentifier { model.useLibraryPhoto(output, assetIdentifier: asset, edited: true); finishAfterEditing = true }
+                    editing = false
+                }.interactiveDismissDisabled()
+            }
+    }
+}
+
+private struct ZoomablePhoto: UIViewControllerRepresentable {
+    let url: URL
+    let close: () -> Void
+    func makeUIViewController(context: Context) -> PhotoViewerController { PhotoViewerController(url: url, close: close) }
+    func updateUIViewController(_ controller: PhotoViewerController, context: Context) {}
+}
+
+private final class PhotoViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    private let url: URL
+    private let closeAction: () -> Void
+    private let scroll = UIScrollView(), picture = UIImageView(), closeButton = UIButton(type: .system)
+    private var fittedSize = CGSize.zero
+    init(url: URL, close: @escaping () -> Void) { self.url = url; closeAction = close; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { fatalError() }
+    override var prefersStatusBarHidden: Bool { true }
+    override func viewDidLoad() {
+        super.viewDidLoad(); view.backgroundColor = .black
+        scroll.delegate = self; scroll.backgroundColor = .black; scroll.showsVerticalScrollIndicator = false; scroll.showsHorizontalScrollIndicator = false
+        scroll.contentInsetAdjustmentBehavior = .never; scroll.bounces = false; scroll.bouncesZoom = true
+        scroll.accessibilityIdentifier = "photo-zoom-surface"; scroll.accessibilityValue = "fit"
+        picture.contentMode = .scaleAspectFit; picture.isAccessibilityElement = true; picture.accessibilityLabel = "图片，可双指缩放和拖动查看"
+        scroll.addSubview(picture); view.addSubview(scroll)
+        closeButton.setImage(UIImage(systemName: "xmark"), for: .normal); closeButton.tintColor = .white; closeButton.backgroundColor = UIColor.black.withAlphaComponent(0.45); closeButton.layer.cornerRadius = 19
+        closeButton.accessibilityLabel = "关闭图片"; closeButton.addAction(UIAction { [weak self] _ in self?.closeAction() }, for: .touchUpInside); view.addSubview(closeButton)
+        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(zoom(_:))); doubleTap.numberOfTapsRequired = 2; scroll.addGestureRecognizer(doubleTap)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(toggleControls)); tap.require(toFail: doubleTap); scroll.addGestureRecognizer(tap)
+        let swipe = UISwipeGestureRecognizer(target: self, action: #selector(closeFromSwipe)); swipe.direction = .down; swipe.delegate = self; scroll.addGestureRecognizer(swipe)
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(share(_:))); scroll.addGestureRecognizer(hold)
+        let fileURL = url
+        Task { [weak self] in
+            let image = await Task.detached(priority: .userInitiated) { UIImage(contentsOfFile: fileURL.path) }.value
+            guard let self else { return }
+            self.picture.image = image; self.fittedSize = .zero; self.view.setNeedsLayout()
+            if image == nil { let label = UILabel(); label.text = "图片无法读取，请关闭后重试"; label.textColor = .white; label.textAlignment = .center; label.frame = self.view.bounds; label.autoresizingMask = [.flexibleWidth, .flexibleHeight]; self.view.insertSubview(label, belowSubview: self.closeButton) }
+        }
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews(); scroll.frame = view.bounds
+        closeButton.frame = CGRect(x: 16, y: view.safeAreaInsets.top + 12, width: 38, height: 38)
+        guard let image = picture.image, image.size.width > 0, image.size.height > 0, fittedSize != scroll.bounds.size else { return }
+        fittedSize = scroll.bounds.size; picture.frame = CGRect(origin: .zero, size: image.size); scroll.contentSize = image.size
+        let fit = min(scroll.bounds.width / image.size.width, scroll.bounds.height / image.size.height)
+        scroll.minimumZoomScale = fit; scroll.maximumZoomScale = max(1, fit * 6); scroll.setZoomScale(fit, animated: false); centerPhoto()
+    }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { picture }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerPhoto(); scroll.accessibilityValue = scroll.zoomScale > scroll.minimumZoomScale * 1.02 ? "zoomed" : "fit" }
+    private func centerPhoto() { scroll.contentInset = UIEdgeInsets(top: max(0, (scroll.bounds.height - scroll.contentSize.height) / 2), left: max(0, (scroll.bounds.width - scroll.contentSize.width) / 2), bottom: 0, right: 0) }
+    @objc private func toggleControls() { closeButton.isHidden.toggle() }
+    @objc private func closeFromSwipe() { closeAction() }
+    @objc private func zoom(_ gesture: UITapGestureRecognizer) {
+        if scroll.zoomScale > scroll.minimumZoomScale * 1.02 { scroll.setZoomScale(scroll.minimumZoomScale, animated: true); return }
+        let level = min(scroll.maximumZoomScale, scroll.minimumZoomScale * 2.8), point = gesture.location(in: picture)
+        let size = CGSize(width: scroll.bounds.width / level, height: scroll.bounds.height / level)
+        scroll.zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), animated: true)
+    }
+    @objc private func share(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        let sheet = UIActivityViewController(activityItems: [url], applicationActivities: nil); sheet.popoverPresentationController?.sourceView = picture; present(sheet, animated: true)
+    }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool { !(gestureRecognizer is UISwipeGestureRecognizer) || scroll.zoomScale <= scroll.minimumZoomScale * 1.02 }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { gestureRecognizer is UISwipeGestureRecognizer || otherGestureRecognizer is UISwipeGestureRecognizer }
+}

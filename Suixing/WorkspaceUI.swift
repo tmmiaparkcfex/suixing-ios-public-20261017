@@ -53,6 +53,7 @@ struct WorkspaceView: View {
         .sheet(item: Binding(get: { panel == nil ? model.preview : nil }, set: { model.preview = $0 })) { file in
             FilePreviewSheet(url: file.url)
         }
+        .fullScreenCover(item: $model.photoPreview) { photo in FullscreenPhotoView(photo: photo) }
         .sheet(item: $model.playback) { item in MediaPlaybackSheet(item: item) }
         .confirmationDialog("新建对话？当前会话会保留在记录中。", isPresented: $confirmNew, titleVisibility: .visible) {
             Button("新建对话") { Task { await model.act("new") } }
@@ -263,7 +264,9 @@ struct ChatView: View {
             initialFollowLatest: !(model.designPreview && ["--show-formatting", "--show-images", "--show-reading", "--show-media"].contains(where: ProcessInfo.processInfo.arguments.contains)),
             progress: model.conversation.busy ? AnyView(inlineProgress.environmentObject(model)) : nil,
             progressRevision: "\(model.conversation.busy)-\(model.conversation.events.count)-\(model.conversation.events.last?.summary ?? "")",
-            emptyState: AnyView(emptyState.environmentObject(model)), onFollowingLatest: { followingLatest = $0 })
+            emptyState: AnyView(emptyState.environmentObject(model)), onFollowingLatest: { followingLatest = $0 }, onUserScroll: {
+                inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false
+            })
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .bottomTrailing) {
                 if !followingLatest {
@@ -355,7 +358,7 @@ struct ChatView: View {
                     VoiceComposerControl(voice: model.voiceRecorder, dismissKeyboard: { inputFocused = false; composerExpanded = false })
                 } else {
                     HStack(alignment: .top, spacing: 5) {
-                        ComposerTextInput(draft: model.composerDraft, focused: $inputFocused, expanded: composerExpanded, disabled: model.working, edited: { model.lastDraftEditAt = Date() })
+                        ComposerTextInput(draft: model.composerDraft, focused: $inputFocused, expanded: composerExpanded, disabled: model.working, edited: { model.lastDraftEditAt = Date() }, send: submitDraft)
                         Button { composerExpanded.toggle(); if !composerExpanded { inputFocused = false } } label: { Image(systemName: composerExpanded ? "chevron.down" : "chevron.up").font(.system(size: 12, weight: .semibold)).frame(width: 26, height: 24) }.foregroundStyle(softInk).accessibilityLabel(composerExpanded ? "收起输入框和键盘" : "展开输入框")
                     }.padding(.horizontal, 3).padding(.top, 2)
                 }
@@ -379,16 +382,23 @@ struct ChatView: View {
                     }, dismissKeyboard: { inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false }).frame(width: 32, height: 32)
                     ComposerSendButton(draft: model.composerDraft) {
                         inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false
-                        Task { if model.conversation.busy { await model.act("stop") } else { await model.send() } }
+                        Task { if model.conversation.busy && !model.hasSendableDraft { await model.act("stop") } else { await model.send() } }
                     }
                 }.foregroundStyle(Color(.darkGray))
             }.padding(13).background(.white, in: RoundedRectangle(cornerRadius: 21))
                 .overlay { RoundedRectangle(cornerRadius: 21).stroke(hairline, lineWidth: 1) }
                 .shadow(color: .black.opacity(0.035), radius: 9, y: 2)
+            if model.sendingMessage { Text(model.uploadStatus ?? "正在提交到电脑，请勿重复点击").font(.system(size: 11)).foregroundStyle(inkBlue).accessibilityIdentifier("message-submit-status") }
             VoiceRecognitionStatus(voice: model.voiceRecorder)
             UsageFooter(openDetails: { inputFocused = false; openPanel(.usage) })
         }.padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 5).background(.white)
     }
+    private func submitDraft() {
+        guard model.hasSendableDraft, !model.working else { return }
+        inputFocused = false; composerExpanded = false; trayOpen = false; modelPicker = false
+        Task { await model.send() }
+    }
+
 }
 
 private struct ModelSelectionOverlay: View {
@@ -415,9 +425,10 @@ private struct ComposerTextInput: View {
     var focused: FocusState<Bool>.Binding
     let expanded: Bool, disabled: Bool
     let edited: () -> Void
+    let send: () -> Void
     var body: some View {
         TextField("发消息，@ 引用文件", text: $draft.text, axis: .vertical)
-            .focused(focused).disabled(disabled)
+            .focused(focused).disabled(disabled).submitLabel(.send).onSubmit(send)
             .font(.system(size: 15)).lineLimit(expanded ? 1...4 : 1...1)
             .frame(minHeight: expanded ? 42 : 22, alignment: .topLeading)
             .accessibilityIdentifier("composer-text")
@@ -432,11 +443,11 @@ private struct ComposerSendButton: View {
     private var disabled: Bool { model.working || (!model.conversation.busy && draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && model.pendingImages.isEmpty && model.pendingDocuments.isEmpty) }
     var body: some View {
         Button(action: send) {
-            Image(systemName: model.conversation.busy ? "stop.fill" : "arrow.up")
+            Image(systemName: model.conversation.busy && !model.hasSendableDraft ? "stop.fill" : "arrow.up")
                 .font(.system(size: model.conversation.busy ? 14 : 19, weight: .semibold))
                 .foregroundStyle(.white).frame(width: 40, height: 40).background(inkBlue, in: Circle())
         }.buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.4 : 1)
-            .accessibilityLabel(model.conversation.busy ? "停止当前任务" : "发送指令")
+            .accessibilityLabel(model.conversation.busy && !model.hasSendableDraft ? "停止当前任务" : "发送指令")
     }
 }
 
@@ -471,6 +482,7 @@ struct MessageBubble: View {
     @State private var showingUsage = false
     private var isUser: Bool { message.role == "user" }
     private var isProgress: Bool { !isUser && message.phase == "commentary" }
+    private var hasImages: Bool { message.images?.isEmpty == false }
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: 11) {
             HStack(spacing: 6) {
@@ -489,8 +501,8 @@ struct MessageBubble: View {
                     ForEach((message.images ?? []).filter { $0.inline != true }) { image in ConversationImageView(image: image, engine: engine) }
                     ForEach((message.documents ?? []).filter { !message.text.contains("](suixing-file:" + $0.id + ")") }) { file in ConversationFileView(file: file, engine: engine) }
                 }
-                    .padding(isUser ? 14 : 0)
-                    .background(isUser ? Color(red: 0.935, green: 0.943, blue: 0.998) : .clear, in: RoundedRectangle(cornerRadius: 20))
+                    .padding(isUser && !hasImages ? 14 : 0)
+                    .background(isUser && !hasImages ? Color(red: 0.935, green: 0.943, blue: 0.998) : .clear, in: RoundedRectangle(cornerRadius: 20))
                     .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
                 if !isUser { Spacer(minLength: 0) }
             }

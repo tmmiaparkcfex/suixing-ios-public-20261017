@@ -54,7 +54,7 @@ final class PocketFixtureProtocol: URLProtocol, @unchecked Sendable {
         let label = PocketEngine.title(engine) + "-" + suffix
         var response: [String: Any] = ["ok": true]
         if route.hasSuffix("/state") {
-            response = ["threadId": id, "title": label + " 测试对话", "engine": engine, "cwd": "D:/codex/fixture", "connected": true, "historyReady": true, "csrf": "fixture-csrf", "busy": false, "approvals": [], "questions": [], "events": [],
+            response = ["threadId": id, "title": label + " 测试对话", "engine": engine, "cwd": "D:/codex/fixture", "connected": true, "historyReady": true, "csrf": "fixture-csrf", "busy": ProcessInfo.processInfo.arguments.contains("--busy-fixture"), "approvals": [], "questions": [], "events": [],
                 "capabilities": ["newSession": true, "deleteSession": engine != "codex", "deleteMode": engine == "workbuddy" ? "delete" : "archive", "deleteDisabledReason": "Codex 归档请在电脑操作"],
                 "messages": [["role": "assistant", "itemId": id + "-message", "time": 1700000000000, "text": label + " 会话内容\n\n这是当前会话的真实加载结果标记。"]],
                 "controls": controls, "usage": ["totalTokens": 100, "contextTokens": 20, "contextWindow": 1000]]

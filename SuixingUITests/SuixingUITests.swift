@@ -6,6 +6,52 @@ import Vision
     private func launch(_ extras: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--design-preview", "--engine", "codex", "--reset-overlay-position"] + extras; app.launch(); return app
     }
+
+    func testKeyboardSendSubmitsWhileComputerWorks() {
+        let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--busy-fixture"]; app.launch()
+        XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
+        let input = app.descendants(matching: .any)["composer-text"]; input.tap(); input.typeText("One tap keyboard message")
+        XCTAssertTrue(app.buttons["发送指令"].exists)
+        let send = app.keyboards.buttons["Send"]
+        XCTAssertTrue(send.waitForExistence(timeout: 5)); send.tap()
+        XCTAssertTrue(app.tables["transcript-table"].staticTexts["One tap keyboard message"].waitForExistence(timeout: 10))
+        XCTAssertFalse((input.value as? String ?? "").contains("One tap keyboard message"))
+    }
+    func testRoundSendDoesNotStopTaskBeforeSending() {
+        let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--busy-fixture"]; app.launch()
+        XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
+        let input = app.descendants(matching: .any)["composer-text"]; input.tap(); input.typeText("One tap working message")
+        app.buttons["发送指令"].tap()
+        XCTAssertTrue(app.tables["transcript-table"].staticTexts["One tap working message"].waitForExistence(timeout: 10))
+    }
+    func testQuestionCanCollapseReopenAndSkip() {
+        let app = launch(["--show-questions"])
+        XCTAssertTrue(app.buttons["关闭问题卡片"].waitForExistence(timeout: 8)); app.buttons["关闭问题卡片"].tap()
+        XCTAssertTrue(app.buttons["展开待回答问题"].exists); app.buttons["展开待回答问题"].tap()
+        XCTAssertTrue(app.buttons["跳过当前问题"].exists); app.buttons["跳过当前问题"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["question-option-preview-scope-0"]); waitForExpectations(timeout: 5)
+    }
+    func testLibraryPhotoBodyOpensZoomAndDirectEditor() {
+        let app = launch(["--show-attachments", "--photo-library-fixture"])
+        let photo = app.buttons["放大预览相册照片"].firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.tap()
+        XCTAssertTrue(app.buttons["关闭图片"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["编辑图片"].exists); app.buttons["编辑图片"].tap()
+        XCTAssertTrue(app.buttons["使用此图"].waitForExistence(timeout: 8)); app.buttons["使用此图"].tap()
+        XCTAssertTrue(app.buttons["取消选择这张照片"].firstMatch.waitForExistence(timeout: 8))
+    }
+    func testScrollCollapsesTrayAndPreservesDraftAndManualArrow() {
+        let app = launch(["--show-reading"])
+        let input = app.descendants(matching: .any)["composer-text"]; input.tap(); input.typeText("Unsent draft")
+        app.buttons["添加照片和文件"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["attachment-tray"].waitForExistence(timeout: 5))
+        app.tables["transcript-table"].swipeDown()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.descendants(matching: .any)["attachment-tray"]); waitForExpectations(timeout: 5)
+        XCTAssertEqual(input.value as? String, "Unsent draft")
+        XCTAssertTrue(app.buttons["展开输入框"].exists); app.buttons["展开输入框"].tap()
+        XCTAssertTrue(app.buttons["收起输入框和键盘"].exists)
+    }
+
     func testMarkdownStructure() {
         let app = launch(["--show-formatting"])
         XCTAssertTrue(app.staticTexts["准备已就绪"].waitForExistence(timeout: 8))
@@ -23,8 +69,14 @@ import Vision
         XCTAssertTrue(app.staticTexts["图片与文字一起显示"].exists)
         XCTAssertFalse(app.staticTexts["![示意图](suixing-image:preview-desktop)"].exists)
         image.tap()
-        XCTAssertTrue(app.buttons["完成"].waitForExistence(timeout: 8))
-        app.buttons["完成"].tap()
+        XCTAssertTrue(app.buttons["关闭图片"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["完成"].exists)
+        let photo = app.scrollViews["photo-zoom-surface"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 8))
+        photo.doubleTap()
+        expectation(for: NSPredicate(format: "value == %@", "zoomed"), evaluatedWith: photo)
+        waitForExpectations(timeout: 5)
+        app.buttons["关闭图片"].tap()
         let table = app.tables["transcript-table"]
         table.swipeUp()
         XCTAssertTrue(app.buttons["conversation-image-preview-phone"].waitForExistence(timeout: 8))
@@ -194,9 +246,10 @@ import Vision
         XCTAssertTrue(app.buttons["选择模型：模型 B"].waitForExistence(timeout: 5))
         app.buttons["选择模型：模型 B"].tap()
         XCTAssertTrue(app.staticTexts["0.65×"].exists)
+        XCTAssertTrue(app.staticTexts["✓ 电脑已确认"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B")).firstMatch.exists)
         app.buttons["选择推理等级：high"].tap()
-        XCTAssertTrue(app.staticTexts["电脑已确认模型设置。"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.buttons["选择模型：模型 B"].exists)
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["选择模型：模型 B"]); waitForExpectations(timeout: 8)
         let selector = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B"))
         XCTAssertTrue(selector.firstMatch.exists)
     }
@@ -204,8 +257,8 @@ import Vision
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--controls-refusal-fixture"]; app.launch()
         XCTAssertTrue(app.staticTexts["Codex-A 会话内容"].waitForExistence(timeout: 10))
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
-        app.buttons["选择模型：模型 B"].tap(); app.buttons["选择推理等级：high"].tap()
-        XCTAssertTrue(app.staticTexts["电脑尚未确认设置，手机没有应用这次切换，请重试。"].waitForExistence(timeout: 8))
+        app.buttons["选择模型：模型 B"].tap()
+        XCTAssertTrue(app.staticTexts["电脑尚未确认设置，请重新同步后再发送。"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["选择模型：模型 B"].exists)
         XCTAssertTrue(app.buttons["选择推理等级：high"].exists)
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 A")).firstMatch.exists)
