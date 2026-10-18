@@ -6,7 +6,7 @@ on:
         description: Verification scope
         type: choice
         default: full
-        options: [full, performance, reader]
+        options: [full, performance, reader, interactions]
 permissions:
   contents: read
 jobs:
@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check markdown structure and editor geometry
-        if: inputs.scope != 'performance'
+        if: inputs.scope != 'performance' && inputs.scope != 'interactions'
         run: |
           mkdir -p checks
           swiftc Suixing/ContentCore.swift Validation/CoreChecks.swift -o checks/content-core
@@ -24,7 +24,7 @@ jobs:
           swiftc -parse-as-library -O Validation/FileReferenceChecks.swift -o checks/file-references
           checks/file-references | tee checks/file-reference-performance.json
       - name: Build native iPhone app without signing
-        if: inputs.scope != 'performance'
+        if: inputs.scope != 'performance' && inputs.scope != 'interactions'
         run: |
           set -euo pipefail
           xcodebuild -version
@@ -34,7 +34,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' build
       - name: Package unsigned IPA
-        if: inputs.scope != 'performance'
+        if: inputs.scope != 'performance' && inputs.scope != 'interactions'
         run: |
           set -euo pipefail
           mkdir -p package/Payload
@@ -45,7 +45,7 @@ jobs:
           zip -qr Suixing-unsigned.ipa Payload
           shasum -a 256 Suixing-unsigned.ipa > SHA256.txt
       - uses: actions/upload-artifact@v4
-        if: inputs.scope != 'performance'
+        if: inputs.scope != 'performance' && inputs.scope != 'interactions'
         with:
           name: Suixing-iPhone-unsigned
           path: |
@@ -65,7 +65,7 @@ jobs:
             -derivedDataPath simulator-build CODE_SIGNING_ALLOWED=NO build
           echo "$DEVICE" > .simulator-id
       - name: Render native iPhone 13 Pro screens
-        if: inputs.scope != 'performance'
+        if: inputs.scope != 'performance' && inputs.scope != 'interactions'
         run: |
           set -euo pipefail
           DEVICE=$(cat .simulator-id)
@@ -92,7 +92,7 @@ jobs:
             xcrun simctl terminate "$DEVICE" local.suixing.pocket.zhang
           done
       - uses: actions/upload-artifact@v4
-        if: always() && inputs.scope != 'performance'
+        if: always() && inputs.scope != 'performance' && inputs.scope != 'interactions'
         with:
           name: Suixing-native-UI-review
           path: screenshots/*
@@ -107,6 +107,12 @@ jobs:
           if [ "${{ inputs.scope }}" = "reader" ]; then
             FILTER=()
             for TEST in testMarkdownStructure testTranscriptDesktopImageLoadsAndOpens testLongHistoryScrollAndJumpNeverBlanks testStreamingDoesNotMoveHistoryAnchor testNetworkEngineAndConversationSwitches testTypingDoesNotInvalidateLongTranscript testLargeConversationUsageRefreshDoesNotRebuildHistory; do
+              FILTER+=("-only-testing:SuixingUITests/SuixingUITests/$TEST")
+            done
+          fi
+          if [ "${{ inputs.scope }}" = "interactions" ]; then
+            FILTER=()
+            for TEST in testAttachmentTrayRaisesComposerAndVoiceKeyboardToggle testHoldVoiceReleaseDraftCanBeEditedBeforeManualSend testVoiceModeReturnsToDraftAndPreservesTypedText testHoldVoiceSlideUpCancelsWithoutSending testCompactModelAndReasoningConfirmOriginalState testModelRefusalDoesNotPretendChangeSucceeded; do
               FILTER+=("-only-testing:SuixingUITests/SuixingUITests/$TEST")
             done
           fi

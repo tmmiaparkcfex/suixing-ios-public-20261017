@@ -139,8 +139,14 @@ import Vision
         XCTAssertEqual(input.value as? String, "帮我整理截图，完成后提醒我。")
         XCTAssertFalse(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。"].exists)
         input.tap(); input.typeText(" Please check first.")
+        // The actual edit depends on the caret position chosen by the tap.
+        let edited = input.value as? String ?? ""
+        XCTAssertTrue(edited.contains("Please check first."))
+        XCTAssertNotEqual(edited, "帮我整理截图，完成后提醒我。")
+        XCTAssertFalse(app.tables["transcript-table"].staticTexts[edited].exists)
         app.buttons["发送指令"].tap()
-        XCTAssertTrue(app.tables["transcript-table"].staticTexts["帮我整理截图，完成后提醒我。 Please check first."].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.tables["transcript-table"].staticTexts[edited].waitForExistence(timeout: 8))
+        XCTAssertNotEqual(input.value as? String, edited)
     }
     func testVoiceModeReturnsToDraftAndPreservesTypedText() {
         let app = XCUIApplication(); app.launchArguments = ["--network-fixture", "--voice-fixture"]; app.launch()
@@ -169,7 +175,7 @@ import Vision
         let app = launch()
         let plus = app.buttons["添加照片和文件"]
         XCTAssertTrue(plus.waitForExistence(timeout: 8)); let before = plus.frame.midY; plus.tap()
-        XCTAssertTrue(app.otherElements["attachment-tray"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["拍照"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["拍照"].exists); XCTAssertTrue(app.buttons["文件"].exists)
         XCTAssertLessThan(app.buttons["收起附件面板"].frame.midY, before - 100)
         app.buttons["收起附件面板"].tap()
@@ -189,7 +195,7 @@ import Vision
         XCTAssertTrue(app.staticTexts["0.65×"].exists)
         app.buttons["选择推理等级：high"].tap()
         XCTAssertTrue(app.staticTexts["电脑已确认模型设置。"].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.otherElements["compact-model-picker"].exists)
+        XCTAssertFalse(app.buttons["选择模型：模型 B"].exists)
         let selector = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 B"))
         XCTAssertTrue(selector.firstMatch.exists)
     }
@@ -199,7 +205,9 @@ import Vision
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：")).firstMatch.tap()
         app.buttons["选择模型：模型 B"].tap(); app.buttons["选择推理等级：high"].tap()
         XCTAssertTrue(app.staticTexts["电脑尚未确认设置，手机没有应用这次切换，请重试。"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.otherElements["compact-model-picker"].exists)
+        XCTAssertTrue(app.buttons["选择模型：模型 B"].exists)
+        XCTAssertTrue(app.buttons["选择推理等级：high"].exists)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "切换模型：模型 A")).firstMatch.exists)
         XCTAssertFalse(app.staticTexts["电脑已确认模型设置。"].exists)
     }
     func testInlineSingleChoiceSendsImmediately() {
